@@ -1,0 +1,15 @@
+spring:
+  application:
+    name: snapdragon-fe-gateway
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${CASDOOR_ISSUER_URI:https://id.snapdragon.systems}
+  cloud:
+    gateway:
+      routes:
+        - id: fe-default
+          uri: ${DOWNSTREAM_URI:http://snapdragon-systems-web.snapdragon-frontend.svc.cluster.local:80}
+          predicates:
+            - Path=/**
