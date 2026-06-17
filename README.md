@@ -143,6 +143,62 @@ Overlay-relevant env vars (the full set is documented in `snapdragon-gateway`):
 
 ---
 
+## TODO: Anubis bot-challenge layer
+
+[Anubis](https://anubis.techaro.lol/) is a proof-of-work HTTP challenge middleware designed to
+block AI scrapers, credential-stuffers, and brute-force bots before they reach any upstream
+service. The plan is to insert it as a transparent reverse proxy in front of this gateway so
+suspicious traffic is challenged at the edge, not inside the JWT-validated gateway stack.
+
+### Architecture
+
+```
+  Browser / client
+        │
+        ▼
+  Anubis  (proof-of-work challenge, IP/UA heuristics)
+        │  (challenged requests get a JS PoW puzzle; bots fail + get 429)
+        │  (trusted requests forwarded immediately)
+        ▼
+  snapdragon-fe-gateway  (JWT validation, route-access enforcement)
+        │
+        ▼
+  snapdragon-systems-web  (host shell)
+```
+
+Anubis runs as a sidecar container in the same `snapdragon-frontend` namespace, so the
+fe-gateway's TCP port is never exposed directly to the cluster ingress.
+
+### Implementation checklist
+
+- [ ] Add `anubis/anubis:latest` container to `specs/cluster/manifests/frontend/deployment.yaml`
+      (sidecar: listens on 8929, forwards to `localhost:8080` = the fe-gateway container port)
+- [ ] Update the fe-gateway Service / Ingress to point at port 8929 (Anubis) instead of 8080
+- [ ] Wire `ANUBIS_BIND=:8929` and `ANUBIS_TARGET=http://localhost:8080` via ConfigMap
+- [ ] Configure `ANUBIS_DIFFICULTY` (default 5 — proof-of-work iterations; tune to challenge
+      cost vs. legitimate-user friction tradeoff)
+- [ ] Add bot-signature rules (`ANUBIS_BOTS_POLICY`) for known scraper UA patterns
+- [ ] Gate behind a generator `optional-services.yaml` opt-in or make it default-on
+      (recommendation: default-on for all fe-gateway deployments; operators disable via
+      `ANUBIS_DIFFICULTY=0` / policy file to NO-OP challenges)
+- [ ] Validate that `/api/auth/**` + `/actuator/health` bypass the challenge (Anubis supports
+      path exemptions via its policy config — the fe-gateway's public auth paths must be exempt
+      so the login flow isn't challenged before a user has any JS context)
+- [ ] Add QEMU/e2e regression: `verify-client.sh` should confirm the fe-gateway reachable
+      through Anubis after a clean login (a PoW-failed early abort shows as a 429 mid-test)
+
+### Security notes
+
+- Anubis is **not a WAF** and does not replace the gateway's JWT/route-access enforcement;
+  it only adds a pre-authentication friction layer.
+- For authenticated API paths (those behind Casdoor JWT) Anubis may be bypassed once the
+  browser holds a valid session cookie/token — that is intentional (re-challenging every API
+  call would break the SPA). The challenge only fires on unauthenticated / unknown clients.
+- Public paths (registration, login callback) need exemptions to prevent the login flow
+  from PoW-looping itself.
+
+---
+
 ## Relationship to the platform
 
 - **Gateways** — one shared `snapdragon-gateway` image; this overlay is its frontend
