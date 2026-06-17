@@ -126,6 +126,15 @@ back to the baked-in canonical seed — **never silently fail-open**. The admin-
 (`snapdragon-admin-bff-api`) CRUDs the canonical rows. Longest-matching `url_pattern`
 wins; explicit `allow=false` denies; the `PUBLIC` sentinel permits anonymous traffic.
 
+### MFA-required route enforcement (🔭 planned)
+
+> Status: 🔭 planned (design-complete in the shared gateway, not yet shipped).
+> Casdoor MFA adds a `gateway_route_access.mfa_required` flag, fail-closed, plus an
+> `amr`/`acr` → `MFA_SATISFIED` authority. Because the enforcement lives in the shared
+> gateway image's route-access layer, fe-gateway picks it up automatically once it
+> lands — no change to this overlay is expected beyond new route-access rows flowing
+> from the admin-bff.
+
 ---
 
 ## Configuration
@@ -143,7 +152,15 @@ Overlay-relevant env vars (the full set is documented in `snapdragon-gateway`):
 
 ---
 
-## TODO: Anubis bot-challenge layer
+## Roadmap: Anubis bot-challenge layer (🔭 planned)
+
+> **Status: 🔭 planned — not implemented in this repo, and not in the shared
+> `snapdragon-gateway` base image either.** No Anubis container, manifest, or
+> config ships here today; this section is design intent only. Because this
+> overlay carries no Kubernetes manifests of its own, the sidecar and its
+> Service/Ingress wiring would live in the **`snapdragon-generator`** repo (the
+> deployed source of truth that renders the cluster manifests) — see the
+> qualified paths in the checklist below.
 
 [Anubis](https://anubis.techaro.lol/) is a proof-of-work HTTP challenge middleware designed to
 block AI scrapers, credential-stuffers, and brute-force bots before they reach any upstream
@@ -152,40 +169,63 @@ suspicious traffic is challenged at the edge, not inside the JWT-validated gatew
 
 ### Architecture
 
-```
-  Browser / client
-        │
-        ▼
-  Anubis  (proof-of-work challenge, IP/UA heuristics)
-        │  (challenged requests get a JS PoW puzzle; bots fail + get 429)
-        │  (trusted requests forwarded immediately)
-        ▼
-  snapdragon-fe-gateway  (JWT validation, route-access enforcement)
-        │
-        ▼
-  snapdragon-systems-web  (host shell)
+The dashed node is the 🔭 planned Anubis layer; the boxed nodes are the
+✅ shipped `fe-gateway → web-host` path that runs today.
+
+```mermaid
+flowchart TD
+    client["Browser / client"]
+    anubis["Anubis<br/>proof-of-work challenge, IP/UA heuristics"]
+    feg["snapdragon-fe-gateway<br/>JWT validation, route-access enforcement"]
+    web["snapdragon-systems-web<br/>host shell"]
+
+    client --> anubis
+    anubis -->|"trusted: forwarded immediately"| feg
+    anubis -.->|"challenged: JS PoW puzzle; bots fail and get 429"| client
+    feg --> web
+
+    subgraph shipped["✅ shipped (main)"]
+        feg
+        web
+    end
+
+    classDef planned stroke-dasharray:4,stroke:#b8860b
+    class anubis planned
 ```
 
-Anubis runs as a sidecar container in the same `snapdragon-frontend` namespace, so the
+Anubis would run as a sidecar container in the same `snapdragon-frontend` namespace, so the
 fe-gateway's TCP port is never exposed directly to the cluster ingress.
+
+### Deployment shape
+
+Per the platform roadmap, the intended rollout is **shields-up / enabled by default in
+PROD** and **disabled in the TEST environment** (so e2e/QEMU runs aren't PoW-throttled),
+with a **superadmin admin console** exposing the challenge's status + metrics.
 
 ### Implementation checklist
 
-- [ ] Add `anubis/anubis:latest` container to `specs/cluster/manifests/frontend/deployment.yaml`
+> All file paths below live in the **`snapdragon-generator`** repo, **not** this overlay
+> repo. This repo has no `specs/` directory, no k8s manifests, and no `verify-client.sh`;
+> the Anubis sidecar would be added to the generator-rendered frontend manifests.
+
+- [ ] Add `anubis/anubis:latest` container to the generator's
+      `specs/cluster/manifests/frontend/deployment.yaml`
       (sidecar: listens on 8929, forwards to `localhost:8080` = the fe-gateway container port)
-- [ ] Update the fe-gateway Service / Ingress to point at port 8929 (Anubis) instead of 8080
+- [ ] Update the fe-gateway Service / Ingress (generator-rendered) to point at port 8929
+      (Anubis) instead of 8080
 - [ ] Wire `ANUBIS_BIND=:8929` and `ANUBIS_TARGET=http://localhost:8080` via ConfigMap
 - [ ] Configure `ANUBIS_DIFFICULTY` (default 5 — proof-of-work iterations; tune to challenge
       cost vs. legitimate-user friction tradeoff)
 - [ ] Add bot-signature rules (`ANUBIS_BOTS_POLICY`) for known scraper UA patterns
-- [ ] Gate behind a generator `optional-services.yaml` opt-in or make it default-on
-      (recommendation: default-on for all fe-gateway deployments; operators disable via
-      `ANUBIS_DIFFICULTY=0` / policy file to NO-OP challenges)
+- [ ] Default-on in PROD, off in TEST (per roadmap); operators disable via
+      `ANUBIS_DIFFICULTY=0` / policy file to NO-OP challenges
+- [ ] Surface challenge status + metrics in the superadmin admin console
 - [ ] Validate that `/api/auth/**` + `/actuator/health` bypass the challenge (Anubis supports
       path exemptions via its policy config — the fe-gateway's public auth paths must be exempt
       so the login flow isn't challenged before a user has any JS context)
-- [ ] Add QEMU/e2e regression: `verify-client.sh` should confirm the fe-gateway reachable
-      through Anubis after a clean login (a PoW-failed early abort shows as a 429 mid-test)
+- [ ] Add QEMU/e2e regression: the generator's `verify-client.sh` should confirm the
+      fe-gateway reachable through Anubis after a clean login (a PoW-failed early abort shows
+      as a 429 mid-test)
 
 ### Security notes
 
@@ -219,3 +259,8 @@ by the generator's ArgoCD Application (shared `snapdragon-gateway` Helm chart wi
 `gateway_route_access` rows. This repo's `application-fe.yml` and `liquibase/changelog`
 are the standalone/local-dev mirror of that same identity — keep them in sync with the
 generator Application, which stays the deployed source of truth.
+
+Note the scope of the changelog here: `001-gateway-routes.xml` seeds **only** the
+single `fe-default` row into `gateway_routes`. It seeds **no** `gateway_route_access`
+rows — those are CRUDed by the admin-bff at runtime (or supplied by the base image's
+canonical seed), never baked in by this overlay.
