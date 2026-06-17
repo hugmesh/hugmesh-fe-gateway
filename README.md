@@ -107,11 +107,11 @@ The shared WebFilters run (after Spring Security authenticates the JWT) in order
 | +100 | `RevocationGatewayFilter` | reject revoked Casdoor tokens (Cassandra-cached) |
 | +200 | `ExternalAuthHeaderFilter` | inject additive `External-Authorization` headers when an external-OAuth token is present (never required) |
 | +250 | `GatewayRouteAccessFilter` | **per-gateway external-access rules** + the cross-domain hard-deny / `SUPERADMIN` bypass |
-| +300 | `ResourceAccessFilter` | snapdragon.games per-resource grants (`game:{slug}`, `session:{id}`) |
+| +300 | `ResourceAccessFilter` | fine-grained per-resource grants (`{kind}:{id}`) for services that register them |
 
-`ROLE_ADMIN` / `ROLE_GAME-MASTER` on the internal JWT bypass the access filters
-**within their own domain**, so the admin who manages the rules is never locked out.
-Infra/observability paths (`/actuator/**`, …) stay gated to `GAME-MASTER` / `ADMIN` /
+`ROLE_ADMIN` on the internal JWT bypasses the access filters **within its own
+domain**, so the admin who manages the rules is never locked out.
+Infra/observability paths (`/actuator/**`, …) stay gated to `ADMIN` /
 `SUPERADMIN` by the shared `SecurityConfig`.
 
 ### Per-gateway route access
@@ -242,8 +242,9 @@ with a **superadmin admin console** exposing the challenge's status + metrics.
 ## Relationship to the platform
 
 - **Gateways** — one shared `snapdragon-gateway` image; this overlay is its frontend
-  instance. The be-gateway, identity (pki) gateway and games gateway are siblings off
-  the same image.
+  instance. The be-gateway and identity (pki) gateway are siblings off the same image
+  (and, only when the optional games service is enabled — off by default — a games
+  gateway is rendered the same way).
 - **Casdoor** — the gateway is a resource server only; it validates JWTs minted by the
   brand's Casdoor (fronted by the pki-gateway) and never exposes a login.
 - **Federation** — the host shell behind this gateway is the module-federation host;
