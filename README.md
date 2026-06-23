@@ -174,14 +174,18 @@ wins; explicit `allow=false` denies; the `PUBLIC` sentinel permits anonymous tra
 Route-access data access follows the platform standard — Spring Data R2DBC reactive
 repositories, no raw SQL strings.
 
-### MFA-required route enforcement (🔭 planned)
+### MFA-required route enforcement (✅ inherited, ships dark)
 
-> Status: 🔭 planned (design-complete in the shared gateway, not yet shipped).
-> Casdoor MFA adds a `gateway_route_access.mfa_required` flag, fail-closed, plus an
-> `amr`/`acr` → `MFA_SATISFIED` authority. Because the enforcement lives in the shared
-> gateway image's route-access layer, fe-gateway picks it up automatically once it
-> lands — no change to this overlay is expected beyond new route-access rows flowing
-> from the admin-bff.
+> Status: ✅ shipped + tested in the shared gateway image; **feature-flagged dark
+> (default off)**, not absent. Casdoor MFA adds a `gateway_route_access.mfa_required`
+> flag, fail-closed, plus a `MFA_SATISFIED` authority derived from the BFF-written,
+> freshness-validated `mfa_satisfied_at` claim, plus the D8 privileged-MFA floor that
+> denies even a SUPERADMIN reaching an `mfa_required` surface without a fresh second
+> factor. Both `app.mfa.enabled` and `app.mfa.enforce-privileged-floor` default
+> `false` (ship-dark) — when off the gateway is byte-identical to its pre-MFA
+> behaviour. Because the enforcement lives in the shared gateway image's route-access
+> layer, fe-gateway already carries it; no change to this overlay is expected beyond
+> flipping the flags and new route-access rows flowing from the admin-bff.
 
 ---
 
@@ -209,9 +213,11 @@ rendered by the `snapdragon-generator`, not added to this overlay:
 - **SSO end-to-end live + e2e** (in progress) — the Casdoor OIDC + opaque-`bff_`
   session model wired through `login-ui` / `user-bff` / this gateway, with full
   e2e coverage.
-- **MFA** (WebAuthn + TOTP + recovery; per-role defaults; step-up) — surfaces here
-  as the `gateway_route_access.mfa_required` flag + `MFA_SATISFIED` authority
-  (see above), picked up from the base image.
+- **MFA** (WebAuthn + TOTP + recovery; per-role defaults; step-up) — the
+  platform-wide enrollment/step-up work is in flight, but the **gateway surface is
+  already shipped + tested** in the base image (the `gateway_route_access.mfa_required`
+  flag + `MFA_SATISFIED` authority + privileged-MFA floor, see above); it ships dark
+  and is enabled by flipping `app.mfa.enabled` / `app.mfa.enforce-privileged-floor`.
 - **Anubis bot-challenge layer** at the edge (proof-of-work pre-auth friction) —
   detailed below; manifests would live in `snapdragon-generator`, not this repo.
 - **Cloudflare** fronts prod.
