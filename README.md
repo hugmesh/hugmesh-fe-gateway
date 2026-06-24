@@ -44,9 +44,13 @@ Shipped on `main` today:
 
 Ecosystem baseline this overlay inherits from the shared gateway image:
 
-- **Spring Boot 4.0.2 / Spring Cloud 2025.1**, on the shared `snapdragon-parent`
-  (metapom, 2.0.0) and `snapdragon-commons` (shared security/tenancy,
-  `systems.snapdragon.commons.*`, 2.0.0) Maven artifacts.
+- **Spring Boot 4.0.2 / Spring Cloud 2025.1**. The shared gateway deliberately
+  builds on `spring-boot-starter-parent:4.0.2` directly (**not** the BFF-focused
+  `snapdragon-parent` metapom, which would drag in liquibase / testcontainers /
+  r2dbc-postgres scaffolding the gateway's Cassandra-based suite does not use) and
+  pulls in `snapdragon-commons` (shared security/tenancy,
+  `systems.snapdragon.commons.*`, 2.0.0 — Boot-4 / Security-7 binary-compatible)
+  as an explicit direct dependency.
 - **Auth model.** Casdoor is the SSO IdP. `login-ui` drives a Casdoor OIDC
   authorization-code (PKCE) redirect and **`user-bff`** performs the server-side
   code→token exchange and holds per-session JWT custody/refresh; the browser only
