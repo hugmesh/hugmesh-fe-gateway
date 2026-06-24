@@ -44,8 +44,8 @@ Shipped on `main` today:
 
 Ecosystem baseline this overlay inherits from the shared gateway image:
 
-- **Spring Boot 4.0.2 / Spring Cloud 2025.1**. The shared gateway deliberately
-  builds on `spring-boot-starter-parent:4.0.2` directly (**not** the BFF-focused
+- **Spring Boot 4.0.7 / Spring Cloud 2025.1.0**. The shared gateway deliberately
+  builds on `spring-boot-starter-parent:4.0.7` directly (**not** the BFF-focused
   `snapdragon-parent` metapom, which would drag in liquibase / testcontainers /
   r2dbc-postgres scaffolding the gateway's Cassandra-based suite does not use) and
   pulls in `snapdragon-commons` (shared security/tenancy,
