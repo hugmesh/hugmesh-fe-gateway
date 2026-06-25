@@ -49,7 +49,7 @@ Ecosystem baseline this overlay inherits from the shared gateway image:
   `snapdragon-parent` metapom, which would drag in liquibase / testcontainers /
   r2dbc-postgres scaffolding the gateway's Cassandra-based suite does not use) and
   pulls in `snapdragon-commons` (shared security/tenancy,
-  `systems.snapdragon.commons.*`, 2.0.0 — Boot-4 / Security-7 binary-compatible)
+  `systems.snapdragon.commons.*`, 2.7.0 — Boot-4 / Security-7 binary-compatible)
   as an explicit direct dependency.
 - **Auth model.** Casdoor is the SSO IdP. `login-ui` drives a Casdoor OIDC
   authorization-code (PKCE) redirect and **`user-bff`** performs the server-side
