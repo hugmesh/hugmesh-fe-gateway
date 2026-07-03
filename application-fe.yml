@@ -12,6 +12,9 @@ spring:
       # spring.cloud.gateway.server.webflux.* — the legacy spring.cloud.gateway.routes
       # prefix binds NOTHING under SCG 5.0 (silent empty list), so this fallback
       # route must live under server.webflux to be honoured.
+      #
+      # Keep this default route/URI in sync with the seeded row in
+      # liquibase/changelog/001-gateway-routes.xml (route_id=fe-default).
       server:
         webflux:
           routes:

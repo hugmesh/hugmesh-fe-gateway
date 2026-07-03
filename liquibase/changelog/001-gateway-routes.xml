@@ -2,11 +2,18 @@
 <databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+  <!-- Keep this seed row in sync with the default route/URI hard-coded in
+       application-fe.yml (fe-default / DOWNSTREAM_URI). -->
   <changeSet id="seed-fe-routes" author="snapdragon">
     <insert tableName="gateway_routes">
       <column name="route_id" value="fe-default"/>
       <column name="uri" value="http://snapdragon-systems-web.snapdragon-frontend.svc.cluster.local:80"/>
       <column name="predicates" value="Path=/**"/>
     </insert>
+    <rollback>
+      <delete tableName="gateway_routes">
+        <where>route_id='fe-default'</where>
+      </delete>
+    </rollback>
   </changeSet>
 </databaseChangeLog>

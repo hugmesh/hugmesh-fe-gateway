@@ -13,7 +13,14 @@ build:image:
   script:
     - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
     - export TAG="${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}"
-    # Base off the sibling snapdragon-gateway image in the same registry namespace.
+    # Base off the sibling snapdragon-gateway image in the same registry namespace:
+    # ${CI_REGISTRY_IMAGE%/*} strips the last path segment (this image's own name)
+    # from the registry path, leaving the shared group/namespace prefix, e.g.
+    # group/snapdragon-fe-gateway -> group/snapdragon-gateway.
+    # Note: GATEWAY_IMAGE's tag comes from $CI_COMMIT_REF_SLUG (branch/tag name,
+    # slugified), which is independent of $TAG below ($CI_COMMIT_TAG or else
+    # $CI_COMMIT_SHORT_SHA) used for this image's own push tags — the sibling
+    # image is not guaranteed to carry a matching $TAG.
     - export GATEWAY_IMAGE="${CI_REGISTRY_IMAGE%/*}/snapdragon-gateway:${CI_COMMIT_REF_SLUG}"
     - docker build --pull --build-arg GATEWAY_IMAGE="$GATEWAY_IMAGE" -t "$CI_REGISTRY_IMAGE:$TAG" -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG" .
     - docker push "$CI_REGISTRY_IMAGE:$TAG"

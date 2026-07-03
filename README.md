@@ -2,12 +2,11 @@
 
 The **frontend front door** of a Snapdragon brand: the per-node-type instance of
 the shared [snapdragon-gateway](https://github.com/Snapdragon-Systems/snapdragon-gateway)
-Spring Cloud Gateway, deployed into the **frontend tier** to sit in front of the
-web host shell and its module-federation remotes (`snapdragon.systems` host +
-remotes).
+Spring Cloud Gateway, deployed into the **frontend tier** in front of the web host
+shell and its module-federation remotes (`snapdragon.systems` host + remotes).
 
-It is **not its own service codebase**. It is a thin **overlay** that re-uses the
-audited `snapdragon-gateway` image and changes only three things:
+This repo is **not its own service codebase**. It is a thin **overlay** that
+re-uses the audited `snapdragon-gateway` image and changes only three things:
 
 1. its **identity** — `SPRING_APPLICATION_NAME=snapdragon-fe-gateway`;
 2. its **route set** — a single catch-all `Path=/**` route to the web frontend;
@@ -115,17 +114,20 @@ performs the OIDC exchange.
 
 ### Casdoor resource server + role authorities
 
-Every request must carry a valid internal Casdoor JWT (issuer `CASDOOR_ISSUER_URI`,
-default `https://id.snapdragon.systems`). The shared `CasdoorAuthorities` converter
-maps the token to Spring authorities:
+Every inbound request must carry a valid internal Casdoor JWT whose issuer matches
+`CASDOOR_ISSUER_URI` (default `https://id.snapdragon.systems`). The shared
+`CasdoorAuthorities` converter translates the validated token into Spring Security
+authorities using these rules, applied in order:
 
-- a `ROLE_USER` floor on every authenticated principal;
-- `roles` claim → `ROLE_<UPPER>` (handles Casdoor's string-or-object role shape);
-- `permissions` claim → verbatim authorities, **except** any entry beginning with a
-  reserved prefix (`ROLE_` / `DOMAIN_`) is dropped — authority-injection defense;
-- legacy `isAdmin: true` → `ROLE_ADMIN`;
-- exactly one issuer-derived `DOMAIN_<x>` authority, keyed on the
-  cryptographically-validated `iss` (never a user-settable claim).
+- Every authenticated principal receives a `ROLE_USER` floor authority.
+- Each entry in the `roles` claim maps to `ROLE_<UPPER>`, accommodating Casdoor's
+  string-or-object role shape.
+- Each entry in the `permissions` claim becomes a verbatim authority, **except** any
+  entry beginning with the reserved prefixes `ROLE_` or `DOMAIN_` is silently
+  dropped — this prevents token holders from injecting elevated authorities.
+- A legacy `isAdmin: true` claim maps to `ROLE_ADMIN`.
+- Exactly one `DOMAIN_<x>` authority is added, derived from the
+  cryptographically-validated `iss` field — never from a user-settable claim.
 
 The least-privilege cascade is `SUPERADMIN > ADMIN`/`MOD`/`USER`, plus the separate
 `ROLE_IMAGE_BUILDER` capability.
@@ -137,20 +139,26 @@ The least-privilege cascade is `SUPERADMIN > ADMIN`/`MOD`/`USER`, plus the separ
 > `DomainRegistry` / `Roles` / `GatewayRouteAccessFilter`). This overlay carries
 > no source of its own and picks it up automatically from the base image.
 
-`DomainRegistry` resolves the validated issuer → brand/domain. It is **opt-in and
-backward-compatible**: with `APP_TENANCY_ISSUERS` unset, the lone configured issuer
-maps to `DOMAIN_default` and a single-issuer cluster behaves exactly as before. When
-populated, only listed per-brand Casdoors are trusted and an unknown `iss` **fails
-closed (401)**. The `GatewayRouteAccessFilter` then **hard-denies** any
-non-`SUPERADMIN` principal whose own domain — derived from the cryptographically
-**validated issuer** (not from a spoofable authority entry) — does not match the
-request's target domain, closing the cross-tenant hole before the grant layer is
-even consulted. `ROLE_SUPERADMIN` is the **only** cross-domain bypass (the infra
-control plane).
+`DomainRegistry` resolves the validated issuer to a brand/domain name. The mechanism
+is **opt-in and backward-compatible**:
+
+- With `APP_TENANCY_ISSUERS` unset, the single configured issuer maps to
+  `DOMAIN_default` and the cluster behaves identically to single-tenant mode.
+- With `APP_TENANCY_ISSUERS` set, only the explicitly listed per-brand Casdoor
+  issuers are trusted. A token whose `iss` does not appear in the list **fails
+  closed (401)**.
+
+Once a domain is established from the validated issuer, `GatewayRouteAccessFilter`
+**hard-denies** any non-`SUPERADMIN` principal whose domain does not match the
+request's target domain. The domain is always derived from the cryptographically
+validated `iss` — never from a user-settable claim — so this check cannot be
+bypassed by crafting a token's authority entries. `ROLE_SUPERADMIN` is the **only**
+cross-domain bypass, reserved for the infra control plane.
 
 ### Authorization filter chain
 
-The shared WebFilters run (after Spring Security authenticates the JWT) in order:
+After Spring Security authenticates the JWT, the shared WebFilters execute in
+this order:
 
 | Order | Filter | Role in front of the web host |
 |------:|--------|-------------------------------|
@@ -170,13 +178,22 @@ Infra/observability paths (`/actuator/**`, …) stay gated to `ADMIN` /
 which URLs from outside **this** gateway" rules. **Postgres is the source of truth**
 (`ROUTE_ACCESS_R2DBC_URL`); the pod loads the `gateway_route_access` rows for its own
 `spring.application.name` (= `snapdragon-fe-gateway`), write-through-mirrors them into
-the Cassandra read-cache, and refreshes every tick. If Postgres is briefly
-unreachable it serves the last-known Cassandra rows; if neither is configured it falls
-back to the baked-in canonical seed — **never silently fail-open**. The admin-bff
-(`snapdragon-admin-bff-api`) CRUDs the canonical rows. Longest-matching `url_pattern`
-wins; explicit `allow=false` denies; the `PUBLIC` sentinel permits anonymous traffic.
-Route-access data access follows the platform standard — Spring Data R2DBC reactive
-repositories, no raw SQL strings.
+the Cassandra read-cache, and refreshes every tick. The fallback chain is strictly
+ordered and **never silently fail-open**:
+
+```mermaid
+flowchart TB
+    A["Refresh tick / startup"] --> B{Postgres reachable?}
+    B -- yes --> C["Load gateway_route_access rows\nfor snapdragon-fe-gateway\nWrite-through to Cassandra"]
+    B -- no --> D{Cassandra reachable?}
+    D -- yes --> E["Serve last-known rows\nfrom Cassandra read-cache"]
+    D -- no --> F["Fall back to baked-in\ncanonical seed (fail-closed)"]
+```
+
+The admin-bff (`snapdragon-admin-bff-api`) CRUDs the canonical rows. Longest-matching
+`url_pattern` wins; explicit `allow=false` denies; the `PUBLIC` sentinel permits
+anonymous traffic. Route-access data access follows the platform standard — Spring
+Data R2DBC reactive repositories, no raw SQL strings.
 
 ### MFA-required route enforcement (✅ inherited, ships dark)
 
@@ -195,7 +212,8 @@ repositories, no raw SQL strings.
 
 ## Configuration
 
-Overlay-relevant env vars (the full set is documented in `snapdragon-gateway`):
+The env vars below are specific to this overlay. The full configuration reference
+is documented in `snapdragon-gateway`.
 
 | Env var | Default | Purpose |
 |---------|---------|---------|
@@ -205,6 +223,20 @@ Overlay-relevant env vars (the full set is documented in `snapdragon-gateway`):
 | `APP_TENANCY_ISSUERS` | _(empty)_ | CSV `issuerUri=domain,…` — enables multi-brand mode (empty ⇒ single-tenant `default`) |
 | `APP_TENANCY_HOSTS` | _(empty)_ | CSV `hostSuffix=domain,…` — defense-in-depth Host→domain map |
 | `ROUTE_ACCESS_R2DBC_URL` | _(empty)_ | Postgres source-of-truth for route-access rows (empty ⇒ Cassandra-cache/seed only) |
+
+---
+
+## Known gaps
+
+- **Unverified "fe" Spring profile activation** (`Dockerfile:9-15`) — this overlay
+  ships `application-fe.yml`, which Spring Boot only picks up from
+  `SPRING_CONFIG_ADDITIONAL_LOCATION` when profile `fe` is active. Nothing in this
+  repo (Dockerfile, `application-fe.yml`) sets `SPRING_PROFILES_ACTIVE=fe`; it is
+  assumed the base `snapdragon-gateway` image derives the active profile from
+  `SPRING_APPLICATION_NAME` or an equivalent convention. This has not been
+  confirmed against the `snapdragon-gateway` source — until it is, treat the
+  Casdoor `issuer-uri` override and the `fe-default` route as **unverified to
+  load at runtime**, not merely as an inherited-from-base-image assumption.
 
 ---
 
@@ -309,13 +341,14 @@ with a **superadmin admin console** exposing the challenge's status + metrics.
 
 #### Security notes
 
-- Anubis is **not a WAF** and does not replace the gateway's JWT/route-access enforcement;
-  it only adds a pre-authentication friction layer.
-- For authenticated API paths (those behind Casdoor JWT) Anubis may be bypassed once the
-  browser holds a valid session cookie/token — that is intentional (re-challenging every API
-  call would break the SPA). The challenge only fires on unauthenticated / unknown clients.
-- Public paths (registration, login callback) need exemptions to prevent the login flow
-  from PoW-looping itself.
+- Anubis is **not a WAF** and does not replace the gateway's JWT or route-access
+  enforcement. It is purely a pre-authentication friction layer at the network edge.
+- Once the browser holds a valid session token, Anubis does not re-challenge
+  authenticated API calls — that is intentional. Re-challenging every API request
+  would break the SPA. The PoW challenge fires only on unauthenticated or
+  unrecognized clients.
+- Public paths (registration, login callback) must be exempted so that the login
+  flow does not PoW-loop before the user has a JS context to solve a puzzle.
 
 ---
 
