@@ -50,13 +50,17 @@ Ecosystem baseline this overlay inherits from the shared gateway image:
   pulls in `snapdragon-commons` (shared security/tenancy,
   `systems.snapdragon.commons.*`, 2.7.0 — Boot-4 / Security-7 binary-compatible)
   as an explicit direct dependency.
-- **Auth model.** Casdoor is the SSO IdP. `login-ui` drives a Casdoor OIDC
-  authorization-code (PKCE) redirect and **`user-bff`** performs the server-side
-  code→token exchange and holds per-session JWT custody/refresh; the browser only
+- **Auth model.** Casdoor is the SSO IdP, but it is **internal-only and never
+  redirects the browser** (native-login model, superseding the old OIDC
+  authorization-code redirect). `login-ui` renders its own login form and POSTs
+  credentials directly to a `/bff/login`-style endpoint on its own BFF
+  (**`user-bff`** for the frontend); `user-bff` authenticates against Casdoor
+  server-to-server and holds per-session JWT custody/refresh; the browser only
   ever holds an **opaque `bff_`-prefixed session** and never sees its own Casdoor
-  JWT. (Login/session/account logic is being **relocated from admin-bff to
-  user-bff**, with the shared account/session/MFA/Casdoor-admin infra extracted
-  to the new **`snapdragon-auth-core`** artifact; account/session **data** stays
+  JWT or talks to Casdoor directly. (Login/session/account logic is being
+  **relocated from admin-bff to user-bff**, with the shared account/session/MFA/
+  Casdoor-admin infra extracted to the new **`snapdragon-auth-core`** artifact;
+  account/session **data** stays
   in `admin-bff-db`, reached over mTLS + `X-Internal-Token`.) The gateway stays a
   **pure Casdoor-JWT OAuth2 resource server**: a pre-security exchange filter in
   the shared image swaps the inbound `bff_` session → the internal custody JWT, so
@@ -107,10 +111,11 @@ authorization stack for free. The relevant pieces for the frontend front door:
 The browser behind this front door holds only an **opaque `bff_`-prefixed
 session** — never a Casdoor JWT. A pre-security exchange filter in the shared
 image swaps that `bff_` session for the internal **custody JWT** (minted/held by
-`user-bff` after its server-side OIDC code→token exchange) **before** Spring
-Security runs, so the entire JWT validation + authority conversion + route-access
-stack below operates unchanged. The gateway itself exposes **no login** and never
-performs the OIDC exchange.
+`user-bff` after authenticating the POSTed native-login form server-to-server
+against the internal-only Casdoor) **before** Spring Security runs, so the entire
+JWT validation + authority conversion + route-access stack below operates
+unchanged. The gateway itself exposes **no login** and never talks to Casdoor
+directly.
 
 ### Casdoor resource server + role authorities
 
@@ -246,9 +251,10 @@ Grounded in the platform roadmap. Items below are **designed / in-flight**, not
 shipped on `main`. Most are inherited from the shared `snapdragon-gateway` image or
 rendered by the `snapdragon-generator`, not added to this overlay:
 
-- **SSO end-to-end live + e2e** (in progress) — the Casdoor OIDC + opaque-`bff_`
-  session model wired through `login-ui` / `user-bff` / this gateway, with full
-  e2e coverage.
+- **SSO end-to-end live + e2e** (in progress) — the native-login model
+  (internal-only Casdoor, `login-ui` POSTing to `user-bff`'s login endpoint,
+  opaque `bff_` session) wired through `login-ui` / `user-bff` / this gateway,
+  with full e2e coverage.
 - **MFA** (WebAuthn + TOTP + recovery; per-role defaults; step-up) — the
   platform-wide enrollment/step-up work is in flight, but the **gateway surface is
   already shipped + tested** in the base image (the `gateway_route_access.mfa_required`
