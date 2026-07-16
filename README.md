@@ -26,9 +26,9 @@ docker build -t snapdragon-systems/fe-gateway:dev .
 
 ---
 
-## Current State
+## Status
 
-Shipped on `main` today:
+Shipped on `main` today (see "Known gaps" below for what's still unverified):
 
 - **Frontend-tier overlay is live.** The single catch-all `fe-default`
   (`Path=/**` → `snapdragon-systems-web`) route is seeded via Liquibase and
@@ -48,7 +48,7 @@ Ecosystem baseline this overlay inherits from the shared gateway image:
   `snapdragon-parent` metapom, which would drag in liquibase / testcontainers /
   r2dbc-postgres scaffolding the gateway's Cassandra-based suite does not use) and
   pulls in `snapdragon-commons` (shared security/tenancy,
-  `systems.snapdragon.commons.*`, 2.7.0 — Boot-4 / Security-7 binary-compatible)
+  `systems.snapdragon.commons.*`, 2.0.0 — Boot-4 / Security-7 binary-compatible)
   as an explicit direct dependency.
 - **Auth model.** Casdoor is the SSO IdP, but it is **internal-only and never
   redirects the browser** (native-login model, superseding the old OIDC
@@ -117,12 +117,52 @@ JWT validation + authority conversion + route-access stack below operates
 unchanged. The gateway itself exposes **no login** and never talks to Casdoor
 directly.
 
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant L as login-ui
+    participant U as user-bff
+    participant C as Casdoor
+    participant G as snapdragon-fe-gateway
+    participant W as snapdragon-systems-web
+
+    Note over B,C: Login (native-login model, once per session; Casdoor is internal-only)
+    B->>L: loads login form (own UI, no Casdoor redirect)
+    L->>U: POST /bff/login (credentials)
+    U->>C: authenticate server-to-server
+    C-->>U: Casdoor JWT (custody, held by user-bff)
+    U-->>B: Set-Cookie bff_session (opaque, HttpOnly)
+
+    Note over B,W: Every request through the front door
+    B->>G: request + bff_ session cookie
+    G->>G: pre-security filter exchanges bff_ session -> custody JWT
+    G->>G: JWT validation + authority conversion + route-access filters
+    G->>W: forwarded request (Path=/**)
+    W-->>B: response
+```
+
 ### Casdoor resource server + role authorities
 
 Every inbound request must carry a valid internal Casdoor JWT whose issuer matches
-`CASDOOR_ISSUER_URI` (default `https://id.snapdragon.systems`). The shared
-`CasdoorAuthorities` converter translates the validated token into Spring Security
-authorities using these rules, applied in order:
+`CASDOOR_ISSUER_URI` (default `https://id.snapdragon.systems`) — **with one
+tier-scoped, GET-only exception**. On the fe tier specifically (instance names
+suffixed `-fe-gateway`), the shared image's `SecurityConfig` `permitAll`s a
+narrow anonymous surface so a logged-out visitor can load the app at all: the
+SPA shell (`/`, `/index.html`, the root-level hashed JS/CSS bundles,
+`/importmap.json`, `/remoteEntry.json`, `/assets/**`), the two public
+federation reads (`/api/federation/vanity(/**)`, `/api/federation/capabilities`),
+and the native-login page (`/login/**`) — plus the exact anonymous **POST**
+`/bff/login` credential-submit endpoint and a couple of narrowly-scoped public
+`/bff/public/**` reads (login-page announcements, appeal-contact). Every other
+path, method, and tier stays on the coarse `authenticated()` floor. This is
+enforced entirely in the shared `snapdragon-gateway` image
+(`SecurityConfig.PUBLIC_PATHS` / `FE_SHELL_PUBLIC_GET_PATHS`, tier-detected by
+the `-fe-gateway` suffix) and mirrored by matching `PUBLIC` rows in
+`GatewayRouteAccessFilter`'s own seed (`CanonicalSeed.fe()`) so the coarse
+floor and the route-access layer never disagree — this overlay carries no
+source of its own for either. The shared `CasdoorAuthorities` converter
+translates every *other* validated token into Spring Security authorities
+using these rules, applied in order:
 
 - Every authenticated principal receives a `ROLE_USER` floor authority.
 - Each entry in the `roles` claim maps to `ROLE_<UPPER>`, accommodating Casdoor's
@@ -233,15 +273,44 @@ is documented in `snapdragon-gateway`.
 
 ## Known gaps
 
-- **Unverified "fe" Spring profile activation** (`Dockerfile:9-15`) — this overlay
-  ships `application-fe.yml`, which Spring Boot only picks up from
-  `SPRING_CONFIG_ADDITIONAL_LOCATION` when profile `fe` is active. Nothing in this
-  repo (Dockerfile, `application-fe.yml`) sets `SPRING_PROFILES_ACTIVE=fe`; it is
-  assumed the base `snapdragon-gateway` image derives the active profile from
-  `SPRING_APPLICATION_NAME` or an equivalent convention. This has not been
-  confirmed against the `snapdragon-gateway` source — until it is, treat the
-  Casdoor `issuer-uri` override and the `fe-default` route as **unverified to
-  load at runtime**, not merely as an inherited-from-base-image assumption.
+- **`SPRING_PROFILES_ACTIVE` is never set to `fe`** (`Dockerfile:9-16`) — this
+  overlay ships `application-fe.yml`, which Spring Boot only picks up from
+  `SPRING_CONFIG_ADDITIONAL_LOCATION` when profile `fe` is active, and nothing in
+  this repo's Dockerfile sets `SPRING_PROFILES_ACTIVE=fe`. **Checked directly
+  against the current `snapdragon-gateway` base image source** (its `Dockerfile`
+  and `application.yml` on `origin/main`): it does **not** derive an active
+  profile from `SPRING_APPLICATION_NAME` or any other convention —
+  `SPRING_PROFILES_ACTIVE` isn't referenced anywhere in that repo. So a plain
+  `docker run` of this overlay's own image (per the `docker build` example above)
+  almost certainly never loads `application-fe.yml`: the Casdoor `issuer-uri`
+  override and the `fe-default` fallback route silently never apply, and the
+  container falls through to the base image's own packaged `application.yml`
+  defaults instead.
+  - **Confirmed 2026-07-16 directly against `snapdragon-generator`'s current
+    source (both the production Helm chart and the local compose stack) —
+    neither real deployment path uses this repo's image, `application-fe.yml`,
+    or Liquibase changelog at all.**
+    `specs/cluster/charts/snapdragon-gateway/values.yaml` sets
+    `image.repository: registry.snapdragon.systems/snapdragon/snapdragon-gateway`
+    — the shared **base** image, not the overlay image this repo's own
+    `.gitlab-ci.yml` builds and pushes (`.../snapdragon-fe-gateway`) — and the
+    chart's `deployment.yaml` sets `SPRING_PROFILES_ACTIVE=routes` plus mounts
+    a Helm-templated `application-routes.yml` ConfigMap, fixed for this exact
+    profile-activation bug class by `snapdragon-generator` PR #275 (merged
+    2026-07-08). `tests/stack/compose.local.yaml`'s `snapdragon-fe-gateway`
+    service likewise builds straight from `.stack-src/snapdragon-gateway` (the
+    base repo, again not this one) with the identical
+    `SPRING_PROFILES_ACTIVE: routes` fix (`snapdragon-generator` PR #261). A
+    grep of `snapdragon-generator`'s full manifest/spec/compose tree turns up
+    no reference to this repo's own pushed image
+    (`registry.snapdragon.systems/snapdragon/snapdragon-fe-gateway`) at all.
+    **So this repo's own Dockerfile/`application-fe.yml`/Liquibase overlay
+    mechanism is not exercised by either real deployment path today** — it is
+    effectively a standalone artifact. Whether that's intentional (this repo
+    predates the generator's route-templating approach and is now vestigial)
+    or an oversight is a product decision, not a code fix this docs pass
+    should make — flagged here so nobody assumes `docker build .` of this repo
+    produces what actually runs anywhere else in the platform.
 
 ---
 
@@ -251,17 +320,21 @@ Grounded in the platform roadmap. Items below are **designed / in-flight**, not
 shipped on `main`. Most are inherited from the shared `snapdragon-gateway` image or
 rendered by the `snapdragon-generator`, not added to this overlay:
 
-- **SSO end-to-end live + e2e** (in progress) — the native-login model
-  (internal-only Casdoor, `login-ui` POSTing to `user-bff`'s login endpoint,
-  opaque `bff_` session) wired through `login-ui` / `user-bff` / this gateway,
-  with full e2e coverage.
+- **SSO native-login model — ✅ shipped**, not in-progress (internal-only
+  Casdoor, `login-ui` POSTing to `user-bff`'s login endpoint, opaque `bff_`
+  session, wired through `login-ui` / `user-bff` / this gateway — see "Status"
+  above). Platform-wide **e2e regression coverage continues to expand**
+  elsewhere in the platform; this overlay repo carries no e2e suite or test
+  tree of its own to track that against.
 - **MFA** (WebAuthn + TOTP + recovery; per-role defaults; step-up) — the
   platform-wide enrollment/step-up work is in flight, but the **gateway surface is
   already shipped + tested** in the base image (the `gateway_route_access.mfa_required`
   flag + `MFA_SATISFIED` authority + privileged-MFA floor, see above); it ships dark
   and is enabled by flipping `app.mfa.enabled` / `app.mfa.enforce-privileged-floor`.
 - **Anubis bot-challenge layer** at the edge (proof-of-work pre-auth friction) —
-  detailed below; manifests would live in `snapdragon-generator`, not this repo.
+  **✅ shipped**, entirely in `snapdragon-generator` (manifests, build-time
+  ingress wiring, admin-console surfacing); detailed below. This repo carries
+  none of that code, same as it always has.
 - **Cloudflare** fronts prod.
 - Platform-wide (not gateway-specific): encrypted versioned backups (Velero +
   kopia/restic), egress VPN (.conf drop-in), per-node attached storage, desktop
@@ -270,80 +343,104 @@ rendered by the `snapdragon-generator`, not added to this overlay:
   coturn/TURN, OWASP pen-test + nuclei in CI, binhost auto-update fleet
   distribution.
 
-### Anubis bot-challenge layer (🔭 planned)
+### Anubis bot-challenge layer (✅ shipped, in `snapdragon-generator`)
 
-> **Status: 🔭 planned — not implemented in this repo, and not in the shared
-> `snapdragon-gateway` base image either.** No Anubis container, manifest, or
-> config ships here today; this section is design intent only. Because this
-> overlay carries no Kubernetes manifests of its own, the sidecar and its
-> Service/Ingress wiring would live in the **`snapdragon-generator`** repo (the
-> deployed source of truth that renders the cluster manifests) — see the
-> qualified paths in the checklist below.
+> **Status: ✅ shipped — but entirely in `snapdragon-generator`, not this repo
+> or the shared `snapdragon-gateway` base image.** Verified 2026-07-16 against
+> `snapdragon-generator`'s current source: `specs/cluster/manifests/anubis/`
+> ships a real `Deployment`/`Service` (pinned `ghcr.io/techarohq/anubis:v1.25.0`,
+> not `:latest`); `build-rpi5-stage4.sh`/`build-x86-host-stage4.sh` reroute the
+> fe-gateway's public Ingress through it when installed
+> (`_opt_wire_anubis_ingress`, unit-tested by
+> `tests/scripts/test-anubis-env-gate.sh`); and `snapdragon-admin-bff-api`
+> ships a real `anubis` package (`AnubisClient` / `AnubisController`, with
+> tests) that proxies Anubis's metrics/health listener into the superadmin
+> console. It is an **optional service, ENV-conditional by design**: default
+> **ON** for `ENV=prod` ("shields up"), default **OFF** for `ENV=test` (so
+> e2e/QEMU runs aren't PoW-throttled), always overridable by an explicit
+> operator selection. This repo itself still carries **zero** Anubis
+> code/manifests — correctly, since the sidecar and its Service/Ingress wiring
+> live entirely in `snapdragon-generator`, exactly as this section originally
+> anticipated — but the checklist below is no longer speculative; it reflects
+> the real shipped shape, not a design intent.
 
 [Anubis](https://anubis.techaro.lol/) is a proof-of-work HTTP challenge middleware designed to
 block AI scrapers, credential-stuffers, and brute-force bots before they reach any upstream
-service. The plan is to insert it as a transparent reverse proxy in front of this gateway so
-suspicious traffic is challenged at the edge, not inside the JWT-validated gateway stack.
+service. It runs as a transparent reverse proxy in front of this gateway so suspicious traffic
+is challenged at the edge, not inside the JWT-validated gateway stack.
 
 #### Architecture
 
-The dashed node is the 🔭 planned Anubis layer; the boxed nodes are the
-✅ shipped `fe-gateway → web-host` path that runs today.
+Anubis is an **optional** hop (dashed edges below) — installed and in the path by default in
+PROD, bypassed by default in TEST; the boxed nodes are the gateway's own always-present path.
 
 ```mermaid
 flowchart TD
     client["Browser / client"]
-    anubis["Anubis<br/>proof-of-work challenge, IP/UA heuristics"]
+    anubis["Anubis (optional)<br/>proof-of-work challenge, ghcr.io/techarohq/anubis"]
     feg["snapdragon-fe-gateway<br/>JWT validation, route-access enforcement"]
     web["snapdragon-systems-web<br/>host shell"]
 
-    client --> anubis
-    anubis -->|"trusted: forwarded immediately"| feg
-    anubis -.->|"challenged: JS PoW puzzle; bots fail and get 429"| client
+    client -.->|"installed (ENV=prod default, or explicit opt-in)"| anubis
+    client -->|"not installed (ENV=test default, or explicit opt-out)"| feg
+    anubis -->|"trusted: forwarded"| feg
+    anubis -.->|"challenged: JS PoW puzzle; bots fail, get 429"| client
     feg --> web
 
-    subgraph shipped["✅ shipped (main)"]
+    subgraph shipped["always present"]
         feg
         web
     end
 
-    classDef planned stroke-dasharray:4,stroke:#b8860b
-    class anubis planned
+    classDef optional stroke-dasharray:4,stroke:#b8860b
+    class anubis optional
 ```
 
-Anubis would run as a sidecar container in the same `snapdragon-frontend` namespace, so the
-fe-gateway's TCP port is never exposed directly to the cluster ingress.
+Anubis runs as a standalone `Deployment` in the same `snapdragon-frontend` namespace; when
+installed, the public Ingress targets Anubis's `:8923` gate instead of the fe-gateway's `:8080`
+directly, so the fe-gateway's own port is never exposed straight to the cluster ingress.
 
 #### Deployment shape
 
-Per the platform roadmap, the intended rollout is **shields-up / enabled by default in
-PROD** and **disabled in the TEST environment** (so e2e/QEMU runs aren't PoW-throttled),
-with a **superadmin admin console** exposing the challenge's status + metrics.
+Shipped exactly per the original rollout design: **shields-up / enabled by default in PROD**
+and **disabled by default in TEST** (so e2e/QEMU runs aren't PoW-throttled) — either default is
+overridable by an explicit operator opt-in/opt-out — with the **superadmin admin console**
+exposing the challenge's status + metrics via the admin-bff's `AnubisClient`/`AnubisController`.
 
 #### Implementation checklist
 
 > All file paths below live in the **`snapdragon-generator`** repo, **not** this overlay
-> repo. This repo has no `specs/` directory, no k8s manifests, and no `verify-client.sh`;
-> the Anubis sidecar would be added to the generator-rendered frontend manifests.
+> repo. This repo has no `specs/` directory, no k8s manifests, and no `verify-client.sh`.
 
-- [ ] Add `anubis/anubis:latest` container to the generator's
-      `specs/cluster/manifests/frontend/deployment.yaml`
-      (sidecar: listens on 8929, forwards to `localhost:8080` = the fe-gateway container port)
-- [ ] Update the fe-gateway Service / Ingress (generator-rendered) to point at port 8929
-      (Anubis) instead of 8080
-- [ ] Wire `ANUBIS_BIND=:8929` and `ANUBIS_TARGET=http://localhost:8080` via ConfigMap
-- [ ] Configure `ANUBIS_DIFFICULTY` (default 5 — proof-of-work iterations; tune to challenge
-      cost vs. legitimate-user friction tradeoff)
-- [ ] Add bot-signature rules (`ANUBIS_BOTS_POLICY`) for known scraper UA patterns
-- [ ] Default-on in PROD, off in TEST (per roadmap); operators disable via
-      `ANUBIS_DIFFICULTY=0` / policy file to NO-OP challenges
-- [ ] Surface challenge status + metrics in the superadmin admin console
-- [ ] Validate that `/api/auth/**` + `/actuator/health` bypass the challenge (Anubis supports
-      path exemptions via its policy config — the fe-gateway's public auth paths must be exempt
-      so the login flow isn't challenged before a user has any JS context)
-- [ ] Add QEMU/e2e regression: the generator's `verify-client.sh` should confirm the
-      fe-gateway reachable through Anubis after a clean login (a PoW-failed early abort shows
-      as a 429 mid-test)
+- [x] Anubis container: `specs/cluster/manifests/anubis/deployment.yaml`
+      (pinned `ghcr.io/techarohq/anubis:v1.25.0`; listens on `:8923`, forwards to
+      `TARGET=http://snapdragon-fe-gateway.snapdragon-frontend.svc.cluster.local:8080`)
+- [x] fe-gateway public Ingress rerouted through Anubis `:8923` when installed
+      (`_opt_wire_anubis_ingress` in the build scripts; idempotent + reversible;
+      routes DIRECT to `:8080` when not installed)
+- [x] Bind/target wired via env on the Deployment (`BIND=:8923`,
+      `TARGET=...:8080`, `METRICS_BIND=:9090`) — different env-var names than
+      this section originally guessed (`ANUBIS_BIND`/`ANUBIS_TARGET`), same effect
+- [x] `DIFFICULTY=5` configured (mirrored to the admin-bff's own
+      `ANUBIS_DIFFICULTY` display value)
+- [ ] Bot-signature rules (`ANUBIS_BOTS_POLICY` or equivalent) — **not found**;
+      the shipped Deployment uses Anubis's own upstream defaults only, no
+      custom bot-policy ConfigMap
+- [x] Default-on in PROD, off in TEST, explicit operator selection always wins
+      (`_opt_anubis_installed` ENV policy; unit-tested by
+      `tests/scripts/test-anubis-env-gate.sh`)
+- [x] Challenge status + metrics surfaced in the superadmin admin console
+      (`snapdragon-admin-bff-api`'s `anubis` package, with tests; degrades to a
+      structured "unreachable" rather than a 503 cascade when Anubis isn't installed)
+- [ ] Validate that `/login/**` + `/bff/login` + `/actuator/health` bypass the
+      challenge — **not found**. The shipped Deployment forwards through a
+      single blanket `TARGET` (Anubis fronts the whole fe-gateway when
+      installed) with no path-based bypass config visible; still worth a live
+      check of whether the login page PoW-loops before a visitor has a JS
+      context to solve the puzzle
+- [ ] Add QEMU/e2e regression confirming the fe-gateway is reachable through
+      Anubis after a clean login — **not found** in `tests/e2e/` or any
+      `verify-client.sh`
 
 #### Security notes
 
@@ -353,8 +450,12 @@ with a **superadmin admin console** exposing the challenge's status + metrics.
   authenticated API calls — that is intentional. Re-challenging every API request
   would break the SPA. The PoW challenge fires only on unauthenticated or
   unrecognized clients.
-- Public paths (registration, login callback) must be exempted so that the login
-  flow does not PoW-loop before the user has a JS context to solve a puzzle.
+- Public paths (registration, `/login`, `/bff/login`) should be exempted so that
+  the login flow doesn't PoW-loop before the visitor has a JS context to solve a
+  puzzle — **not yet verified as implemented** (see the checklist above: no
+  path-exemption config is visible in the shipped Deployment). (There is no
+  browser-facing OIDC redirect/callback route under the native-login model —
+  see "Auth model" above — so no callback path needs exempting.)
 
 ---
 
@@ -378,9 +479,14 @@ with a **superadmin admin console** exposing the challenge's status + metrics.
 The route table and per-instance config that actually run in the cluster are rendered
 by the generator's ArgoCD Application (shared `snapdragon-gateway` Helm chart with
 `instance.name: snapdragon-fe-gateway` + the fe `routes`); the admin-bff CRUDs the
-`gateway_route_access` rows. This repo's `application-fe.yml` and `liquibase/changelog`
-are the standalone/local-dev mirror of that same identity — keep them in sync with the
-generator Application, which stays the deployed source of truth.
+`gateway_route_access` rows. As detailed under "Known gaps" above, the generator's
+local compose stack renders the same identity the same way too (builds the base
+`snapdragon-gateway` image directly with `SPRING_PROFILES_ACTIVE=routes`) — so
+neither the cluster nor local-dev path actually consumes this repo's own
+`application-fe.yml` / `liquibase/changelog`. Keep them in sync with the generator
+Application's rendered config anyway, since it stays the deployed source of truth
+and this repo's files are the only human-readable standalone record of that same
+route/identity shape.
 
 Note the scope of the changelog here: `001-gateway-routes.xml` seeds **only** the
 single `fe-default` row into `gateway_routes`. It seeds **no** `gateway_route_access`
