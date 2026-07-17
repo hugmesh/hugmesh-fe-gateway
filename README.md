@@ -273,19 +273,30 @@ is documented in `snapdragon-gateway`.
 
 ## Known gaps
 
-- **`SPRING_PROFILES_ACTIVE` is never set to `fe`** (`Dockerfile:9-16`) — this
-  overlay ships `application-fe.yml`, which Spring Boot only picks up from
-  `SPRING_CONFIG_ADDITIONAL_LOCATION` when profile `fe` is active, and nothing in
-  this repo's Dockerfile sets `SPRING_PROFILES_ACTIVE=fe`. **Checked directly
-  against the current `snapdragon-gateway` base image source** (its `Dockerfile`
-  and `application.yml` on `origin/main`): it does **not** derive an active
-  profile from `SPRING_APPLICATION_NAME` or any other convention —
-  `SPRING_PROFILES_ACTIVE` isn't referenced anywhere in that repo. So a plain
-  `docker run` of this overlay's own image (per the `docker build` example above)
-  almost certainly never loads `application-fe.yml`: the Casdoor `issuer-uri`
-  override and the `fe-default` fallback route silently never apply, and the
-  container falls through to the base image's own packaged `application.yml`
-  defaults instead.
+- **~~`SPRING_PROFILES_ACTIVE` is never set to `fe`~~ — FIXED 2026-07-17.** The
+  Dockerfile now sets `ENV SPRING_PROFILES_ACTIVE=fe`, so `application-fe.yml` is
+  actually loaded. The analysis previously recorded here was **correct on every
+  point** and is kept below for the evidence trail.
+  - The original finding: this overlay ships `application-fe.yml`, which Spring
+    Boot only picks up from `SPRING_CONFIG_ADDITIONAL_LOCATION` when profile `fe`
+    is active, and nothing in this repo's Dockerfile set `SPRING_PROFILES_ACTIVE=fe`.
+    **Checked directly against the current `snapdragon-gateway` base image source**
+    (its `Dockerfile` and `application.yml` on `origin/main`): it does **not**
+    derive an active profile from `SPRING_APPLICATION_NAME` or any other
+    convention — `SPRING_PROFILES_ACTIVE` isn't referenced anywhere in that repo.
+    So a plain `docker run` of this overlay's own image never loaded
+    `application-fe.yml`: the Casdoor `issuer-uri` override and the `fe-default`
+    fallback route silently never applied.
+  - **Proven empirically 2026-07-17** on this repo's exact stack (Spring Boot
+    4.0.7), booting a real context with the overlay's own file shape in a
+    `SPRING_CONFIG_ADDITIONAL_LOCATION` dir. Without `SPRING_PROFILES_ACTIVE`:
+    `resolved active profiles = []`, the file's properties resolve to `null`.
+    With `SPRING_PROFILES_ACTIVE=fe`: `resolved active profiles = [fe]` and the
+    route properties bind. The failure mode was **not** a clean 404 outage — the
+    base image's packaged `application.yml` ships a genuine `api-default` route
+    (`/api/**` → `api:8080`), so an unprofiled overlay silently served the
+    **wrong route table** with the intended `fe-default` catch-all simply absent.
+    A half-working gateway is harder to notice than a dead one.
   - **Confirmed 2026-07-16 directly against `snapdragon-generator`'s current
     source (both the production Helm chart and the local compose stack) —
     neither real deployment path uses this repo's image, `application-fe.yml`,

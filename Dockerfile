@@ -6,11 +6,19 @@ ENV SPRING_APPLICATION_NAME=snapdragon-fe-gateway
 COPY application-fe.yml /app/config/application-fe.yml
 COPY liquibase/changelog /app/liquibase/changelog
 ENV SPRING_CONFIG_ADDITIONAL_LOCATION=file:/app/config/
-# TODO: application-fe.yml is a profile-specific file (application-{profile}.yml)
-# and Spring Boot only loads it from an additional-location dir when profile "fe"
-# is active — SPRING_PROFILES_ACTIVE is not set anywhere in this file. Confirmed
-# against the current snapdragon-gateway base image (origin/main) that nothing
-# there activates a profile from SPRING_APPLICATION_NAME either, so this file is
-# likely never loaded by a standalone `docker run` of this image. See README
-# "Known gaps" for the full evidence trail and fix options.
+# application-fe.yml is a profile-specific document (application-{profile}.yml).
+# SPRING_CONFIG_ADDITIONAL_LOCATION above only adds a SEARCH DIRECTORY — it does
+# NOT activate a profile — so Boot reads that file only when profile "fe" is
+# active, and the shared snapdragon-gateway base image activates no profile at
+# all (verified on its origin/main: no SPRING_PROFILES_ACTIVE / spring.profiles /
+# setAdditionalProfiles reference anywhere in that repo). Without the line below
+# the overlay is silently never read and the image falls back to the base
+# application.yml's api-default route (/api/** -> api:8080) — i.e. the WRONG
+# route table rather than an obvious failure. Mirrors the canonical fix in
+# snapdragon-generator's snapdragon-gateway chart (SPRING_PROFILES_ACTIVE=routes).
+#
+# This ENV is a DEFAULT only: `docker run -e SPRING_PROFILES_ACTIVE=…` or a k8s
+# env entry REPLACES it (replaces, not appends — pass "fe,other" to keep this
+# file loading alongside another profile).
+ENV SPRING_PROFILES_ACTIVE=fe
 EXPOSE 8080
