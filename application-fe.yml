@@ -1,11 +1,11 @@
 spring:
   application:
-    name: snapdragon-fe-gateway
+    name: hugmesh-fe-gateway
   security:
     oauth2:
       resourceserver:
         jwt:
-          issuer-uri: ${CASDOOR_ISSUER_URI:https://id.snapdragon.systems}
+          issuer-uri: ${CASDOOR_ISSUER_URI:https://id.hugmesh.systems}
   cloud:
     gateway:
       # SCG 5.0 (Spring Boot 4) moved route config to
@@ -17,8 +17,8 @@ spring:
       # liquibase/changelog/001-gateway-routes.xml (route_id=fe-default).
       #
       # NOTE: neither the production Helm chart nor the local compose stack
-      # (both in snapdragon-generator) actually loads THIS file — they deploy
-      # the base snapdragon-gateway image directly with SPRING_PROFILES_ACTIVE=
+      # (both in hugmesh-generator) actually loads THIS file — they deploy
+      # the base hugmesh-gateway image directly with SPRING_PROFILES_ACTIVE=
       # routes + their own Helm/compose-rendered application-routes.yml. See
       # the fe-gateway README's "Known gaps" section for the full evidence
       # trail before assuming an edit here changes real deployed behaviour.
@@ -26,6 +26,6 @@ spring:
         webflux:
           routes:
             - id: fe-default
-              uri: ${DOWNSTREAM_URI:http://snapdragon-systems-web.snapdragon-frontend.svc.cluster.local:80}
+              uri: ${DOWNSTREAM_URI:http://hugmesh-systems-web.hugmesh-frontend.svc.cluster.local:80}
               predicates:
                 - Path=/**

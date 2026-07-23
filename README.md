@@ -1,14 +1,14 @@
-# snapdragon-fe-gateway
+# hugmesh-fe-gateway
 
-The **frontend front door** of a Snapdragon brand: the per-node-type instance of
-the shared [snapdragon-gateway](https://github.com/Snapdragon-Systems/snapdragon-gateway)
+The **frontend front door** of a HugMesh brand: the per-node-type instance of
+the shared [hugmesh-gateway](https://github.com/HugMesh/hugmesh-gateway)
 Spring Cloud Gateway, deployed into the **frontend tier** in front of the web host
-shell and its module-federation remotes (`snapdragon.systems` host + remotes).
+shell and its module-federation remotes (`hugmesh.systems` host + remotes).
 
 This repo is **not its own service codebase**. It is a thin **overlay** that
-re-uses the audited `snapdragon-gateway` image and changes only three things:
+re-uses the audited `hugmesh-gateway` image and changes only three things:
 
-1. its **identity** — `SPRING_APPLICATION_NAME=snapdragon-fe-gateway`;
+1. its **identity** — `SPRING_APPLICATION_NAME=hugmesh-fe-gateway`;
 2. its **route set** — a single catch-all `Path=/**` route to the web frontend;
 3. its **downstream URI** — the in-cluster frontend web service.
 
@@ -18,10 +18,10 @@ domain-scoping, the per-gateway route-access enforcement, revocation) is
 identical, audited gateway code regardless of node type.
 
 ```bash
-# GATEWAY_IMAGE must point at the sibling snapdragon-gateway image (CI passes the
+# GATEWAY_IMAGE must point at the sibling hugmesh-gateway image (CI passes the
 # same-namespace tag automatically; see .gitlab-ci.yml). Default build-arg is
-# snapdragon-systems/gateway:dev.
-docker build -t snapdragon-systems/fe-gateway:dev .
+# hugmesh-systems/gateway:dev.
+docker build -t hugmesh-systems/fe-gateway:dev .
 ```
 
 ---
@@ -31,7 +31,7 @@ docker build -t snapdragon-systems/fe-gateway:dev .
 Shipped on `main` today (see "Known gaps" below for what's still unverified):
 
 - **Frontend-tier overlay is live.** The single catch-all `fe-default`
-  (`Path=/**` → `snapdragon-systems-web`) route is seeded via Liquibase and
+  (`Path=/**` → `hugmesh-systems-web`) route is seeded via Liquibase and
   configured under the **SCG 5.0 `spring.cloud.gateway.server.webflux.routes`**
   namespace (the legacy `spring.cloud.gateway.routes` prefix binds nothing under
   Spring Cloud Gateway 5.0 — see the SCG-5 note in `application-fe.yml`).
@@ -45,10 +45,10 @@ Ecosystem baseline this overlay inherits from the shared gateway image:
 
 - **Spring Boot 4.0.7 / Spring Cloud 2025.1.2**. The shared gateway deliberately
   builds on `spring-boot-starter-parent:4.0.7` directly (**not** the BFF-focused
-  `snapdragon-parent` metapom, which would drag in liquibase / testcontainers /
+  `hugmesh-parent` metapom, which would drag in liquibase / testcontainers /
   r2dbc-postgres scaffolding the gateway's Cassandra-based suite does not use) and
-  pulls in `snapdragon-commons` (shared security/tenancy,
-  `systems.snapdragon.commons.*`, 2.0.0 — Boot-4 / Security-7 binary-compatible)
+  pulls in `hugmesh-commons` (shared security/tenancy,
+  `systems.hugmesh.commons.*`, 2.0.0 — Boot-4 / Security-7 binary-compatible)
   as an explicit direct dependency.
 - **Auth model.** Casdoor is the SSO IdP, but it is **internal-only and never
   redirects the browser** (native-login model, superseding the old OIDC
@@ -59,7 +59,7 @@ Ecosystem baseline this overlay inherits from the shared gateway image:
   ever holds an **opaque `bff_`-prefixed session** and never sees its own Casdoor
   JWT or talks to Casdoor directly. (Login/session/account logic is being
   **relocated from admin-bff to user-bff**, with the shared account/session/MFA/
-  Casdoor-admin infra extracted to the new **`snapdragon-auth-core`** artifact;
+  Casdoor-admin infra extracted to the new **`hugmesh-auth-core`** artifact;
   account/session **data** stays
   in `admin-bff-db`, reached over mTLS + `X-Internal-Token`.) The gateway stays a
   **pure Casdoor-JWT OAuth2 resource server**: a pre-security exchange filter in
@@ -75,16 +75,16 @@ Ecosystem baseline this overlay inherits from the shared gateway image:
 | | |
 |---|---|
 | **Tier** | frontend (host + remotes front door) |
-| **Namespace** | `snapdragon-frontend` |
-| **Identity** | `snapdragon-fe-gateway` (the `gateway` key for its route-access rows) |
-| **Downstream** | `snapdragon-systems-web.snapdragon-frontend.svc.cluster.local:80` (override `DOWNSTREAM_URI`) |
+| **Namespace** | `hugmesh-frontend` |
+| **Identity** | `hugmesh-fe-gateway` (the `gateway` key for its route-access rows) |
+| **Downstream** | `hugmesh-systems-web.hugmesh-frontend.svc.cluster.local:80` (override `DOWNSTREAM_URI`) |
 | **Auth** | validates the **internal Casdoor JWT** as an OAuth2 resource server; **no external login is exposed** (the shared image's pre-security filter exchanges the browser's opaque `bff_` session → custody JWT before validation) |
-| **Base image** | `snapdragon-gateway` (one image, differentiated by `SPRING_APPLICATION_NAME`) |
+| **Base image** | `hugmesh-gateway` (one image, differentiated by `SPRING_APPLICATION_NAME`) |
 
 A brand typically runs several gateway INSTANCES off this one image —
-`snapdragon-fe-gateway` (this repo, the host + remotes front door),
-`snapdragon-be-gateway` (backend / API + social homeservers), and
-`snapdragon-pki-gateway` (identity: Casdoor + headscale) — each with its own
+`hugmesh-fe-gateway` (this repo, the host + remotes front door),
+`hugmesh-be-gateway` (backend / API + social homeservers), and
+`hugmesh-pki-gateway` (identity: Casdoor + headscale) — each with its own
 name, route set and route-access rows. This repo is the frontend one.
 
 ### What's in this repo
@@ -93,15 +93,15 @@ name, route set and route-access rows. This repo is the frontend one.
 |------|---------|
 | `Dockerfile` | `FROM ${GATEWAY_IMAGE}` then bakes the fe identity + config + Liquibase changelog onto the shared image (sets `SPRING_APPLICATION_NAME` and `SPRING_CONFIG_ADDITIONAL_LOCATION`) |
 | `application-fe.yml` | overlay config: `application.name`, the Casdoor `issuer-uri`, and the single `fe-default` `Path=/**` route to the web frontend (under the SCG 5.0 `spring.cloud.gateway.server.webflux.routes` namespace) |
-| `liquibase/changelog/001-gateway-routes.xml` | seeds the `fe-default` route (`Path=/**` → `snapdragon-systems-web`) into the DB-backed `gateway_routes` registry |
+| `liquibase/changelog/001-gateway-routes.xml` | seeds the `fe-default` route (`Path=/**` → `hugmesh-systems-web`) into the DB-backed `gateway_routes` registry |
 | `liquibase/changelog/db.changelog-master.xml` | Liquibase master changelog that includes the route seed |
-| `.gitlab-ci.yml` | builds + pushes this overlay image, basing the build off the sibling `snapdragon-gateway` image in the same in-cluster GitLab registry namespace |
+| `.gitlab-ci.yml` | builds + pushes this overlay image, basing the build off the sibling `hugmesh-gateway` image in the same in-cluster GitLab registry namespace |
 
 CI is **GitLab** (in-cluster). There are no GitHub Actions workflows in this repo.
 
 ---
 
-## Inherited capabilities (from `snapdragon-gateway`)
+## Inherited capabilities (from `hugmesh-gateway`)
 
 Because the image is the shared gateway, the fe-gateway gets the full gateway
 authorization stack for free. The relevant pieces for the frontend front door:
@@ -123,8 +123,8 @@ sequenceDiagram
     participant L as login-ui
     participant U as user-bff
     participant C as Casdoor
-    participant G as snapdragon-fe-gateway
-    participant W as snapdragon-systems-web
+    participant G as hugmesh-fe-gateway
+    participant W as hugmesh-systems-web
 
     Note over B,C: Login (native-login model, once per session; Casdoor is internal-only)
     B->>L: loads login form (own UI, no Casdoor redirect)
@@ -144,7 +144,7 @@ sequenceDiagram
 ### Casdoor resource server + role authorities
 
 Every inbound request must carry a valid internal Casdoor JWT whose issuer matches
-`CASDOOR_ISSUER_URI` (default `https://id.snapdragon.systems`) — **with one
+`CASDOOR_ISSUER_URI` (default `https://id.hugmesh.systems`) — **with one
 tier-scoped, GET-only exception**. On the fe tier specifically (instance names
 suffixed `-fe-gateway`), the shared image's `SecurityConfig` `permitAll`s a
 narrow anonymous surface so a logged-out visitor can load the app at all: the
@@ -155,7 +155,7 @@ and the native-login page (`/login/**`) — plus the exact anonymous **POST**
 `/bff/login` credential-submit endpoint and a couple of narrowly-scoped public
 `/bff/public/**` reads (login-page announcements, appeal-contact). Every other
 path, method, and tier stays on the coarse `authenticated()` floor. This is
-enforced entirely in the shared `snapdragon-gateway` image
+enforced entirely in the shared `hugmesh-gateway` image
 (`SecurityConfig.PUBLIC_PATHS` / `FE_SHELL_PUBLIC_GET_PATHS`, tier-detected by
 the `-fe-gateway` suffix) and mirrored by matching `PUBLIC` rows in
 `GatewayRouteAccessFilter`'s own seed (`CanonicalSeed.fe()`) so the coarse
@@ -222,20 +222,20 @@ Infra/observability paths (`/actuator/**`, …) stay gated to `ADMIN` /
 `GatewayRouteAccessService` enforces the admin-managed "which roles/users may reach
 which URLs from outside **this** gateway" rules. **Postgres is the source of truth**
 (`ROUTE_ACCESS_R2DBC_URL`); the pod loads the `gateway_route_access` rows for its own
-`spring.application.name` (= `snapdragon-fe-gateway`), write-through-mirrors them into
+`spring.application.name` (= `hugmesh-fe-gateway`), write-through-mirrors them into
 the Cassandra read-cache, and refreshes every tick. The fallback chain is strictly
 ordered and **never silently fail-open**:
 
 ```mermaid
 flowchart TB
     A["Refresh tick / startup"] --> B{Postgres reachable?}
-    B -- yes --> C["Load gateway_route_access rows\nfor snapdragon-fe-gateway\nWrite-through to Cassandra"]
+    B -- yes --> C["Load gateway_route_access rows\nfor hugmesh-fe-gateway\nWrite-through to Cassandra"]
     B -- no --> D{Cassandra reachable?}
     D -- yes --> E["Serve last-known rows\nfrom Cassandra read-cache"]
     D -- no --> F["Fall back to baked-in\ncanonical seed (fail-closed)"]
 ```
 
-The admin-bff (`snapdragon-admin-bff-api`) CRUDs the canonical rows. Longest-matching
+The admin-bff (`hugmesh-admin-bff-api`) CRUDs the canonical rows. Longest-matching
 `url_pattern` wins; explicit `allow=false` denies; the `PUBLIC` sentinel permits
 anonymous traffic. Route-access data access follows the platform standard — Spring
 Data R2DBC reactive repositories, no raw SQL strings.
@@ -258,13 +258,13 @@ Data R2DBC reactive repositories, no raw SQL strings.
 ## Configuration
 
 The env vars below are specific to this overlay. The full configuration reference
-is documented in `snapdragon-gateway`.
+is documented in `hugmesh-gateway`.
 
 | Env var | Default | Purpose |
 |---------|---------|---------|
-| `SPRING_APPLICATION_NAME` | `snapdragon-fe-gateway` | gateway identity + route-access `gateway` key (baked into the image) |
-| `CASDOOR_ISSUER_URI` | `https://id.snapdragon.systems` | trusted Casdoor issuer for JWT validation |
-| `DOWNSTREAM_URI` | `http://snapdragon-systems-web.snapdragon-frontend.svc.cluster.local:80` | the web frontend this gateway fronts |
+| `SPRING_APPLICATION_NAME` | `hugmesh-fe-gateway` | gateway identity + route-access `gateway` key (baked into the image) |
+| `CASDOOR_ISSUER_URI` | `https://id.hugmesh.systems` | trusted Casdoor issuer for JWT validation |
+| `DOWNSTREAM_URI` | `http://hugmesh-systems-web.hugmesh-frontend.svc.cluster.local:80` | the web frontend this gateway fronts |
 | `APP_TENANCY_ISSUERS` | _(empty)_ | CSV `issuerUri=domain,…` — enables multi-brand mode (empty ⇒ single-tenant `default`) |
 | `APP_TENANCY_HOSTS` | _(empty)_ | CSV `hostSuffix=domain,…` — defense-in-depth Host→domain map |
 | `ROUTE_ACCESS_R2DBC_URL` | _(empty)_ | Postgres source-of-truth for route-access rows (empty ⇒ Cassandra-cache/seed only) |
@@ -280,7 +280,7 @@ is documented in `snapdragon-gateway`.
   - The original finding: this overlay ships `application-fe.yml`, which Spring
     Boot only picks up from `SPRING_CONFIG_ADDITIONAL_LOCATION` when profile `fe`
     is active, and nothing in this repo's Dockerfile set `SPRING_PROFILES_ACTIVE=fe`.
-    **Checked directly against the current `snapdragon-gateway` base image source**
+    **Checked directly against the current `hugmesh-gateway` base image source**
     (its `Dockerfile` and `application.yml` on `origin/main`): it does **not**
     derive an active profile from `SPRING_APPLICATION_NAME` or any other
     convention — `SPRING_PROFILES_ACTIVE` isn't referenced anywhere in that repo.
@@ -297,24 +297,24 @@ is documented in `snapdragon-gateway`.
     (`/api/**` → `api:8080`), so an unprofiled overlay silently served the
     **wrong route table** with the intended `fe-default` catch-all simply absent.
     A half-working gateway is harder to notice than a dead one.
-  - **Confirmed 2026-07-16 directly against `snapdragon-generator`'s current
+  - **Confirmed 2026-07-16 directly against `hugmesh-generator`'s current
     source (both the production Helm chart and the local compose stack) —
     neither real deployment path uses this repo's image, `application-fe.yml`,
     or Liquibase changelog at all.**
-    `specs/cluster/charts/snapdragon-gateway/values.yaml` sets
-    `image.repository: registry.snapdragon.systems/snapdragon/snapdragon-gateway`
+    `specs/cluster/charts/hugmesh-gateway/values.yaml` sets
+    `image.repository: registry.hugmesh.systems/hugmesh/hugmesh-gateway`
     — the shared **base** image, not the overlay image this repo's own
-    `.gitlab-ci.yml` builds and pushes (`.../snapdragon-fe-gateway`) — and the
+    `.gitlab-ci.yml` builds and pushes (`.../hugmesh-fe-gateway`) — and the
     chart's `deployment.yaml` sets `SPRING_PROFILES_ACTIVE=routes` plus mounts
     a Helm-templated `application-routes.yml` ConfigMap, fixed for this exact
-    profile-activation bug class by `snapdragon-generator` PR #275 (merged
-    2026-07-08). `tests/stack/compose.local.yaml`'s `snapdragon-fe-gateway`
-    service likewise builds straight from `.stack-src/snapdragon-gateway` (the
+    profile-activation bug class by `hugmesh-generator` PR #275 (merged
+    2026-07-08). `tests/stack/compose.local.yaml`'s `hugmesh-fe-gateway`
+    service likewise builds straight from `.stack-src/hugmesh-gateway` (the
     base repo, again not this one) with the identical
-    `SPRING_PROFILES_ACTIVE: routes` fix (`snapdragon-generator` PR #261). A
-    grep of `snapdragon-generator`'s full manifest/spec/compose tree turns up
+    `SPRING_PROFILES_ACTIVE: routes` fix (`hugmesh-generator` PR #261). A
+    grep of `hugmesh-generator`'s full manifest/spec/compose tree turns up
     no reference to this repo's own pushed image
-    (`registry.snapdragon.systems/snapdragon/snapdragon-fe-gateway`) at all.
+    (`registry.hugmesh.systems/hugmesh/hugmesh-fe-gateway`) at all.
     **So this repo's own Dockerfile/`application-fe.yml`/Liquibase overlay
     mechanism is not exercised by either real deployment path today** — it is
     effectively a standalone artifact. Whether that's intentional (this repo
@@ -328,8 +328,8 @@ is documented in `snapdragon-gateway`.
 ## Roadmap
 
 Grounded in the platform roadmap. Items below are **designed / in-flight**, not
-shipped on `main`. Most are inherited from the shared `snapdragon-gateway` image or
-rendered by the `snapdragon-generator`, not added to this overlay:
+shipped on `main`. Most are inherited from the shared `hugmesh-gateway` image or
+rendered by the `hugmesh-generator`, not added to this overlay:
 
 - **SSO native-login model — ✅ shipped**, not in-progress (internal-only
   Casdoor, `login-ui` POSTing to `user-bff`'s login endpoint, opaque `bff_`
@@ -343,7 +343,7 @@ rendered by the `snapdragon-generator`, not added to this overlay:
   flag + `MFA_SATISFIED` authority + privileged-MFA floor, see above); it ships dark
   and is enabled by flipping `app.mfa.enabled` / `app.mfa.enforce-privileged-floor`.
 - **Anubis bot-challenge layer** at the edge (proof-of-work pre-auth friction) —
-  **✅ shipped**, entirely in `snapdragon-generator` (manifests, build-time
+  **✅ shipped**, entirely in `hugmesh-generator` (manifests, build-time
   ingress wiring, admin-console surfacing); detailed below. This repo carries
   none of that code, same as it always has.
 - **Cloudflare** fronts prod.
@@ -354,16 +354,16 @@ rendered by the `snapdragon-generator`, not added to this overlay:
   coturn/TURN, OWASP pen-test + nuclei in CI, binhost auto-update fleet
   distribution.
 
-### Anubis bot-challenge layer (✅ shipped, in `snapdragon-generator`)
+### Anubis bot-challenge layer (✅ shipped, in `hugmesh-generator`)
 
-> **Status: ✅ shipped — but entirely in `snapdragon-generator`, not this repo
-> or the shared `snapdragon-gateway` base image.** Verified 2026-07-16 against
-> `snapdragon-generator`'s current source: `specs/cluster/manifests/anubis/`
+> **Status: ✅ shipped — but entirely in `hugmesh-generator`, not this repo
+> or the shared `hugmesh-gateway` base image.** Verified 2026-07-16 against
+> `hugmesh-generator`'s current source: `specs/cluster/manifests/anubis/`
 > ships a real `Deployment`/`Service` (pinned `ghcr.io/techarohq/anubis:v1.25.0`,
 > not `:latest`); `build-rpi5-stage4.sh`/`build-x86-host-stage4.sh` reroute the
 > fe-gateway's public Ingress through it when installed
 > (`_opt_wire_anubis_ingress`, unit-tested by
-> `tests/scripts/test-anubis-env-gate.sh`); and `snapdragon-admin-bff-api`
+> `tests/scripts/test-anubis-env-gate.sh`); and `hugmesh-admin-bff-api`
 > ships a real `anubis` package (`AnubisClient` / `AnubisController`, with
 > tests) that proxies Anubis's metrics/health listener into the superadmin
 > console. It is an **optional service, ENV-conditional by design**: default
@@ -371,7 +371,7 @@ rendered by the `snapdragon-generator`, not added to this overlay:
 > e2e/QEMU runs aren't PoW-throttled), always overridable by an explicit
 > operator selection. This repo itself still carries **zero** Anubis
 > code/manifests — correctly, since the sidecar and its Service/Ingress wiring
-> live entirely in `snapdragon-generator`, exactly as this section originally
+> live entirely in `hugmesh-generator`, exactly as this section originally
 > anticipated — but the checklist below is no longer speculative; it reflects
 > the real shipped shape, not a design intent.
 
@@ -389,8 +389,8 @@ PROD, bypassed by default in TEST; the boxed nodes are the gateway's own always-
 flowchart TD
     client["Browser / client"]
     anubis["Anubis (optional)<br/>proof-of-work challenge, ghcr.io/techarohq/anubis"]
-    feg["snapdragon-fe-gateway<br/>JWT validation, route-access enforcement"]
-    web["snapdragon-systems-web<br/>host shell"]
+    feg["hugmesh-fe-gateway<br/>JWT validation, route-access enforcement"]
+    web["hugmesh-systems-web<br/>host shell"]
 
     client -.->|"installed (ENV=prod default, or explicit opt-in)"| anubis
     client -->|"not installed (ENV=test default, or explicit opt-out)"| feg
@@ -407,7 +407,7 @@ flowchart TD
     class anubis optional
 ```
 
-Anubis runs as a standalone `Deployment` in the same `snapdragon-frontend` namespace; when
+Anubis runs as a standalone `Deployment` in the same `hugmesh-frontend` namespace; when
 installed, the public Ingress targets Anubis's `:8923` gate instead of the fe-gateway's `:8080`
 directly, so the fe-gateway's own port is never exposed straight to the cluster ingress.
 
@@ -420,12 +420,12 @@ exposing the challenge's status + metrics via the admin-bff's `AnubisClient`/`An
 
 #### Implementation checklist
 
-> All file paths below live in the **`snapdragon-generator`** repo, **not** this overlay
+> All file paths below live in the **`hugmesh-generator`** repo, **not** this overlay
 > repo. This repo has no `specs/` directory, no k8s manifests, and no `verify-client.sh`.
 
 - [x] Anubis container: `specs/cluster/manifests/anubis/deployment.yaml`
       (pinned `ghcr.io/techarohq/anubis:v1.25.0`; listens on `:8923`, forwards to
-      `TARGET=http://snapdragon-fe-gateway.snapdragon-frontend.svc.cluster.local:8080`)
+      `TARGET=http://hugmesh-fe-gateway.hugmesh-frontend.svc.cluster.local:8080`)
 - [x] fe-gateway public Ingress rerouted through Anubis `:8923` when installed
       (`_opt_wire_anubis_ingress` in the build scripts; idempotent + reversible;
       routes DIRECT to `:8080` when not installed)
@@ -441,7 +441,7 @@ exposing the challenge's status + metrics via the admin-bff's `AnubisClient`/`An
       (`_opt_anubis_installed` ENV policy; unit-tested by
       `tests/scripts/test-anubis-env-gate.sh`)
 - [x] Challenge status + metrics surfaced in the superadmin admin console
-      (`snapdragon-admin-bff-api`'s `anubis` package, with tests; degrades to a
+      (`hugmesh-admin-bff-api`'s `anubis` package, with tests; degrades to a
       structured "unreachable" rather than a 503 cascade when Anubis isn't installed)
 - [ ] Validate that `/login/**` + `/bff/login` + `/actuator/health` bypass the
       challenge — **not found**. The shipped Deployment forwards through a
@@ -472,7 +472,7 @@ exposing the challenge's status + metrics via the admin-bff's `AnubisClient`/`An
 
 ## Relationship to the platform
 
-- **Gateways** — one shared `snapdragon-gateway` image; this overlay is its frontend
+- **Gateways** — one shared `hugmesh-gateway` image; this overlay is its frontend
   instance. The be-gateway and identity (pki) gateway are siblings off the same image
   (and, only when the optional games service is enabled — off by default — a games
   gateway is rendered the same way).
@@ -488,11 +488,11 @@ exposing the challenge's status + metrics via the admin-bff's `AnubisClient`/`An
   hard-deny enforce brand isolation at the gateway.
 
 The route table and per-instance config that actually run in the cluster are rendered
-by the generator's ArgoCD Application (shared `snapdragon-gateway` Helm chart with
-`instance.name: snapdragon-fe-gateway` + the fe `routes`); the admin-bff CRUDs the
+by the generator's ArgoCD Application (shared `hugmesh-gateway` Helm chart with
+`instance.name: hugmesh-fe-gateway` + the fe `routes`); the admin-bff CRUDs the
 `gateway_route_access` rows. As detailed under "Known gaps" above, the generator's
 local compose stack renders the same identity the same way too (builds the base
-`snapdragon-gateway` image directly with `SPRING_PROFILES_ACTIVE=routes`) — so
+`hugmesh-gateway` image directly with `SPRING_PROFILES_ACTIVE=routes`) — so
 neither the cluster nor local-dev path actually consumes this repo's own
 `application-fe.yml` / `liquibase/changelog`. Keep them in sync with the generator
 Application's rendered config anyway, since it stays the deployed source of truth
