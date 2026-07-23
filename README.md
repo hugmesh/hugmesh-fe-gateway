@@ -1,7 +1,7 @@
 # hugmesh-fe-gateway
 
 The **frontend front door** of a HugMesh brand: the per-node-type instance of
-the shared [hugmesh-gateway](https://github.com/HugMesh/hugmesh-gateway)
+the shared [hugmesh-gateway](https://github.com/Snapdragon-Systems/hugmesh-gateway)
 Spring Cloud Gateway, deployed into the **frontend tier** in front of the web host
 shell and its module-federation remotes (`hugmesh.systems` host + remotes).
 
@@ -20,7 +20,7 @@ identical, audited gateway code regardless of node type.
 ```bash
 # GATEWAY_IMAGE must point at the sibling hugmesh-gateway image (CI passes the
 # same-namespace tag automatically; see .gitlab-ci.yml). Default build-arg is
-# hugmesh-systems/gateway:dev.
+# hugmesh-systems/hugmesh-gateway:dev.
 docker build -t hugmesh-systems/fe-gateway:dev .
 ```
 
@@ -47,9 +47,14 @@ Ecosystem baseline this overlay inherits from the shared gateway image:
   builds on `spring-boot-starter-parent:4.0.7` directly (**not** the BFF-focused
   `hugmesh-parent` metapom, which would drag in liquibase / testcontainers /
   r2dbc-postgres scaffolding the gateway's Cassandra-based suite does not use) and
-  pulls in `hugmesh-commons` (shared security/tenancy,
-  `systems.hugmesh.commons.*`, 2.0.0 — Boot-4 / Security-7 binary-compatible)
-  as an explicit direct dependency.
+  pulls in `snapdragon-commons` (shared security/tenancy,
+  `systems.snapdragon.commons.*`, 2.0.0 — Boot-4 / Security-7 binary-compatible)
+  as an explicit direct dependency. (The library's own repo has since rebranded
+  to `hugmesh-commons`/`systems.hugmesh.commons.*` as of its 2.1.0 release, but
+  `hugmesh-gateway`'s `pom.xml` still pins the pre-rebrand `systems.snapdragon:
+  snapdragon-commons:2.0.0` coordinates — verified directly against its current
+  `main`, 2026-07-22 — so that's what's actually in the image this overlay
+  reuses today.)
 - **Auth model.** Casdoor is the SSO IdP, but it is **internal-only and never
   redirects the browser** (native-login model, superseding the old OIDC
   authorization-code redirect). `login-ui` renders its own login form and POSTs
