@@ -208,19 +208,37 @@ cross-domain bypass, reserved for the infra control plane.
 ### Authorization filter chain
 
 After Spring Security authenticates the JWT, the shared WebFilters execute in
-this order:
+this order. These are small **positive** orders, not round hundreds — Spring
+merges every `WebFilter` bean into one shared ascending `@Order` namespace
+together with Spring Security's own `WebFilterChainProxy` (registered at
+`-100`), so these principal-dependent filters are placed just *after* it,
+deliberately, so `exchange.getPrincipal()` is already resolved by the time
+they run:
 
 | Order | Filter | Role in front of the web host |
 |------:|--------|-------------------------------|
-| +100 | `RevocationGatewayFilter` | reject revoked Casdoor tokens (Cassandra-cached) |
-| +200 | `ExternalAuthHeaderFilter` | inject additive `External-Authorization` headers when an external-OAuth token is present (never required) |
-| +250 | `GatewayRouteAccessFilter` | **per-gateway external-access rules** + the cross-domain hard-deny / `SUPERADMIN` bypass |
-| +300 | `ResourceAccessFilter` | fine-grained per-resource grants (`{kind}:{id}`) for services that register them |
+| 10 | `RevocationGatewayFilter` | reject revoked Casdoor tokens (Cassandra-cached) |
+| 20 | `ExternalAuthHeaderFilter` | inject additive `External-Authorization` headers when an external-OAuth token is present (never required) |
+| 25 | `GatewayRouteAccessFilter` | **per-gateway external-access rules** + the cross-domain hard-deny / `SUPERADMIN` bypass |
+| 30 | `ResourceAccessFilter` | fine-grained per-resource grants (`{kind}:{id}`) for services that register them |
+
+Before `hugmesh-gateway` commit `d0f3146` (PR #37, "run principal-dependent
+WebFilters AFTER Spring Security (close fail-open)", merged 2026-06-18), these
+same filters were ordered at `Integer.MIN_VALUE+100/+200/+250/+300` — i.e. far
+*before* the security chain, not just before the router. With no principal
+resolved yet, revocation, the route-access DENY, the cross-domain hard-deny,
+the `SUPERADMIN` bypass, and the per-resource grant check all fell through
+their anonymous branch and forwarded every request — a CRITICAL fail-open.
+The table above reflects the current (fixed) `getOrder()` values verified
+directly against `hugmesh-gateway`'s current `main`; this overlay carries none
+of that source and inherits it unchanged from the base image.
 
 `ROLE_ADMIN` on the internal JWT bypasses the access filters **within its own
 domain**, so the admin who manages the rules is never locked out.
-Infra/observability paths (`/actuator/**`, …) stay gated to `ADMIN` /
-`SUPERADMIN` by the shared `SecurityConfig`.
+Infra/observability paths (`/actuator/**`, …) stay gated to `GAME-MASTER` /
+`ADMIN` / `SUPERADMIN` by the shared `SecurityConfig` (`GAME-MASTER` is the
+platform's cross-service infra role and isn't seeded in every deployment,
+which is why `ADMIN` is also included rather than gating on it alone).
 
 ### Per-gateway route access
 
@@ -269,7 +287,7 @@ is documented in `hugmesh-gateway`.
 |---------|---------|---------|
 | `SPRING_APPLICATION_NAME` | `hugmesh-fe-gateway` | gateway identity + route-access `gateway` key (baked into the image) |
 | `CASDOOR_ISSUER_URI` | `https://id.hugmesh.systems` | trusted Casdoor issuer for JWT validation |
-| `DOWNSTREAM_URI` | `http://snapdragon-systems-web.hugmesh-frontend.svc.cluster.local:80` | the web frontend this gateway fronts (Service name not yet renamed, see "Known gaps") |
+| `DOWNSTREAM_URI` | `http://hugmesh-systems-web.hugmesh-frontend.svc.cluster.local:80` | the web frontend this gateway fronts — this is the literal default baked into `application-fe.yml` / the Liquibase seed, but the real K8s Service is still named `snapdragon-systems-web` (not yet renamed), so this default won't resolve until one side catches up; see "Known gaps" |
 | `APP_TENANCY_ISSUERS` | _(empty)_ | CSV `issuerUri=domain,…` — enables multi-brand mode (empty ⇒ single-tenant `default`) |
 | `APP_TENANCY_HOSTS` | _(empty)_ | CSV `hostSuffix=domain,…` — defense-in-depth Host→domain map |
 | `ROUTE_ACCESS_R2DBC_URL` | _(empty)_ | Postgres source-of-truth for route-access rows (empty ⇒ Cassandra-cache/seed only) |
