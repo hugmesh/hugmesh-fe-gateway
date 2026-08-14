@@ -1,9 +1,9 @@
 # hugmesh-fe-gateway
 
 The **frontend front door** of a HugMesh brand: the per-node-type instance of
-the shared [hugmesh-gateway](https://github.com/Snapdragon-Systems/hugmesh-gateway)
+the shared [hugmesh-gateway](https://github.com/hugmesh/hugmesh-gateway)
 Spring Cloud Gateway, deployed into the **frontend tier** in front of the web host
-shell and its module-federation remotes (`hugmesh.systems` host + remotes).
+shell and its module-federation remotes (`hugmesh.net` host + remotes).
 
 This repo is **not its own service codebase**. It is a thin **overlay** that
 re-uses the audited `hugmesh-gateway` image and changes only three things:
@@ -149,7 +149,7 @@ sequenceDiagram
 ### Casdoor resource server + role authorities
 
 Every inbound request must carry a valid internal Casdoor JWT whose issuer matches
-`CASDOOR_ISSUER_URI` (default `https://id.hugmesh.systems`) — **with one
+`CASDOOR_ISSUER_URI` (default `https://id.hugmesh.net`) — **with one
 tier-scoped, GET-only exception**. On the fe tier specifically (instance names
 suffixed `-fe-gateway`), the shared image's `SecurityConfig` `permitAll`s a
 narrow anonymous surface so a logged-out visitor can load the app at all: the
@@ -286,7 +286,7 @@ is documented in `hugmesh-gateway`.
 | Env var | Default | Purpose |
 |---------|---------|---------|
 | `SPRING_APPLICATION_NAME` | `hugmesh-fe-gateway` | gateway identity + route-access `gateway` key (baked into the image) |
-| `CASDOOR_ISSUER_URI` | `https://id.hugmesh.systems` | trusted Casdoor issuer for JWT validation |
+| `CASDOOR_ISSUER_URI` | `https://id.hugmesh.net` | trusted Casdoor issuer for JWT validation |
 | `DOWNSTREAM_URI` | `http://hugmesh-systems-web.hugmesh-frontend.svc.cluster.local:80` | the web frontend this gateway fronts — this is the literal default baked into `application-fe.yml` / the Liquibase seed, but the real K8s Service is still named `snapdragon-systems-web` (not yet renamed), so this default won't resolve until one side catches up; see "Known gaps" |
 | `APP_TENANCY_ISSUERS` | _(empty)_ | CSV `issuerUri=domain,…` — enables multi-brand mode (empty ⇒ single-tenant `default`) |
 | `APP_TENANCY_HOSTS` | _(empty)_ | CSV `hostSuffix=domain,…` — defense-in-depth Host→domain map |
@@ -325,7 +325,7 @@ is documented in `hugmesh-gateway`.
     neither real deployment path uses this repo's image, `application-fe.yml`,
     or Liquibase changelog at all.**
     `specs/cluster/charts/hugmesh-gateway/values.yaml` sets
-    `image.repository: registry.hugmesh.systems/hugmesh/hugmesh-gateway`
+    `image.repository: registry.hugmesh.net/hugmesh/hugmesh-gateway`
     — the shared **base** image, not the overlay image this repo's own
     `.gitlab-ci.yml` builds and pushes (`.../hugmesh-fe-gateway`) — and the
     chart's `deployment.yaml` sets `SPRING_PROFILES_ACTIVE=routes` plus mounts
@@ -337,7 +337,7 @@ is documented in `hugmesh-gateway`.
     `SPRING_PROFILES_ACTIVE: routes` fix (`hugmesh-generator` PR #261). A
     grep of `hugmesh-generator`'s full manifest/spec/compose tree turns up
     no reference to this repo's own pushed image
-    (`registry.hugmesh.systems/hugmesh/hugmesh-fe-gateway`) at all.
+    (`registry.hugmesh.net/hugmesh/hugmesh-fe-gateway`) at all.
     **So this repo's own Dockerfile/`application-fe.yml`/Liquibase overlay
     mechanism is not exercised by either real deployment path today** — it is
     effectively a standalone artifact. Whether that's intentional (this repo
