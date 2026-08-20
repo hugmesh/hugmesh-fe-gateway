@@ -31,8 +31,7 @@ docker build -t hugmesh-systems/fe-gateway:dev .
 Shipped on `main` today (see "Known gaps" below for what's still unverified):
 
 - **Frontend-tier overlay is live.** The single catch-all `fe-default`
-  (`Path=/**` → `snapdragon-systems-web`, see the naming note under "Known
-  gaps") route is seeded via Liquibase and
+  (`Path=/**` → `hugmesh-systems-web`) route is seeded via Liquibase and
   configured under the **SCG 5.0 `spring.cloud.gateway.server.webflux.routes`**
   namespace (the legacy `spring.cloud.gateway.routes` prefix binds nothing under
   Spring Cloud Gateway 5.0 — see the SCG-5 note in `application-fe.yml`).
@@ -50,11 +49,6 @@ Ecosystem baseline this overlay inherits from the shared gateway image:
   r2dbc-postgres scaffolding the gateway's Cassandra-based suite does not use) and
   pulls in `hugmesh-commons` (shared security/tenancy, `systems.hugmesh.commons.*`,
   2.1.0 — Boot-4 / Security-7 binary-compatible) as an explicit direct dependency.
-  (`hugmesh-gateway`'s `pom.xml` pinned the pre-rebrand `systems.snapdragon:
-  snapdragon-commons:2.0.0` coordinates through 2026-07-22, but its own
-  rebrand landed 2026-07-23 — verified directly against its current `main` —
-  so the base image this overlay reuses today already carries the renamed
-  `systems.hugmesh:hugmesh-commons:2.1.0` groupId/artifactId.)
 - **Auth model.** Casdoor is the SSO IdP, but it is **internal-only and never
   redirects the browser** (native-login model, superseding the old OIDC
   authorization-code redirect). `login-ui` renders its own login form and POSTs
@@ -82,7 +76,7 @@ Ecosystem baseline this overlay inherits from the shared gateway image:
 | **Tier** | frontend (host + remotes front door) |
 | **Namespace** | `hugmesh-frontend` |
 | **Identity** | `hugmesh-fe-gateway` (the `gateway` key for its route-access rows) |
-| **Downstream** | `snapdragon-systems-web.hugmesh-frontend.svc.cluster.local:80` (override `DOWNSTREAM_URI`; the K8s Service itself is not yet renamed, see "Known gaps") |
+| **Downstream** | `hugmesh-systems-web.hugmesh-frontend.svc.cluster.local:80` (override `DOWNSTREAM_URI`) |
 | **Auth** | validates the **internal Casdoor JWT** as an OAuth2 resource server; **no external login is exposed** (the shared image's pre-security filter exchanges the browser's opaque `bff_` session → custody JWT before validation) |
 | **Base image** | `hugmesh-gateway` (one image, differentiated by `SPRING_APPLICATION_NAME`) |
 
@@ -98,7 +92,7 @@ name, route set and route-access rows. This repo is the frontend one.
 |------|---------|
 | `Dockerfile` | `FROM ${GATEWAY_IMAGE}` then bakes the fe identity + config + Liquibase changelog onto the shared image (sets `SPRING_APPLICATION_NAME` and `SPRING_CONFIG_ADDITIONAL_LOCATION`) |
 | `application-fe.yml` | overlay config: `application.name`, the Casdoor `issuer-uri`, and the single `fe-default` `Path=/**` route to the web frontend (under the SCG 5.0 `spring.cloud.gateway.server.webflux.routes` namespace) |
-| `liquibase/changelog/001-gateway-routes.xml` | seeds the `fe-default` route (`Path=/**` → `snapdragon-systems-web`) into the DB-backed `gateway_routes` registry |
+| `liquibase/changelog/001-gateway-routes.xml` | seeds the `fe-default` route (`Path=/**` → `hugmesh-systems-web`) into the DB-backed `gateway_routes` registry |
 | `liquibase/changelog/db.changelog-master.xml` | Liquibase master changelog that includes the route seed |
 | `.gitlab-ci.yml` | builds + pushes this overlay image, basing the build off the sibling `hugmesh-gateway` image in the same in-cluster GitLab registry namespace |
 
@@ -129,7 +123,7 @@ sequenceDiagram
     participant U as user-bff
     participant C as Casdoor
     participant G as hugmesh-fe-gateway
-    participant W as snapdragon-systems-web
+    participant W as hugmesh-systems-web
 
     Note over B,C: Login (native-login model, once per session; Casdoor is internal-only)
     B->>L: loads login form (own UI, no Casdoor redirect)
@@ -287,7 +281,7 @@ is documented in `hugmesh-gateway`.
 |---------|---------|---------|
 | `SPRING_APPLICATION_NAME` | `hugmesh-fe-gateway` | gateway identity + route-access `gateway` key (baked into the image) |
 | `CASDOOR_ISSUER_URI` | `https://id.hugmesh.net` | trusted Casdoor issuer for JWT validation |
-| `DOWNSTREAM_URI` | `http://hugmesh-systems-web.hugmesh-frontend.svc.cluster.local:80` | the web frontend this gateway fronts — this is the literal default baked into `application-fe.yml` / the Liquibase seed, but the real K8s Service is still named `snapdragon-systems-web` (not yet renamed), so this default won't resolve until one side catches up; see "Known gaps" |
+| `DOWNSTREAM_URI` | `http://hugmesh-systems-web.hugmesh-frontend.svc.cluster.local:80` | the web frontend this gateway fronts — the literal default baked into `application-fe.yml` / the Liquibase seed, matching the `hugmesh-systems-web` Service `hugmesh-generator` deploys |
 | `APP_TENANCY_ISSUERS` | _(empty)_ | CSV `issuerUri=domain,…` — enables multi-brand mode (empty ⇒ single-tenant `default`) |
 | `APP_TENANCY_HOSTS` | _(empty)_ | CSV `hostSuffix=domain,…` — defense-in-depth Host→domain map |
 | `ROUTE_ACCESS_R2DBC_URL` | _(empty)_ | Postgres source-of-truth for route-access rows (empty ⇒ Cassandra-cache/seed only) |
@@ -345,25 +339,15 @@ is documented in `hugmesh-gateway`.
     or an oversight is a product decision, not a code fix this docs pass
     should make — flagged here so nobody assumes `docker build .` of this repo
     produces what actually runs anywhere else in the platform.
-- **The downstream host-shell Service is still named `snapdragon-systems-web`
-  (pre-rebrand), not `hugmesh-systems-web`.** This doc uses the real current
-  name throughout (this repo's own `DOWNSTREAM_URI` default, `application-fe.yml`,
-  and the Liquibase seed all say `hugmesh-systems-web`, but that hostname
-  resolves to nothing in the cluster). **Verified 2026-07-23 directly against
-  `hugmesh-generator`'s current source**: both
-  `specs/cluster/manifests/frontend/deployment.yaml` (the `Deployment`/`Service`
-  pair) and the real rendered route in
-  `specs/cluster/apps/20-gateway-fe.yaml` (`frontend-host` →
-  `http://snapdragon-systems-web.hugmesh-frontend.svc.cluster.local:80`) still
-  use the pre-rebrand object name, even though the namespace it lives in
-  (`hugmesh-frontend`) has already moved. Same shape as the `snapdragon_gateway`
-  Cassandra-keyspace situation on the sibling `hugmesh-gateway` repo (its
-  README/comments were reverted to the real runtime name pending a proper
-  migration) — a K8s object rename is a live cutover, not a text edit, so it's
-  tracked as a gap here rather than "fixed" by renaming this doc out from under
-  reality. This repo's own `application-fe.yml` and Liquibase seed still say
-  `hugmesh-systems-web` (a pre-existing self-inconsistency against the real
-  Service name, left as config rather than edited by this docs-only pass).
+- **~~The downstream host-shell Service still carried its pre-rebrand name~~ —
+  RESOLVED.** Verified 2026-08-19 directly against `hugmesh-generator`'s
+  current source: both `specs/cluster/manifests/frontend/deployment.yaml` (the
+  `Deployment`/`Service` pair) and the real rendered route in
+  `specs/cluster/apps/20-gateway-fe.yaml` now use `hugmesh-systems-web`
+  (`http://hugmesh-systems-web.hugmesh-frontend.svc.cluster.local:80`), so this
+  repo's own `DOWNSTREAM_URI` default, `application-fe.yml`, and Liquibase seed
+  — which said `hugmesh-systems-web` all along — finally resolve against the
+  real Service name.
 
 ---
 
@@ -432,7 +416,7 @@ flowchart TD
     client["Browser / client"]
     anubis["Anubis (optional)<br/>proof-of-work challenge, ghcr.io/techarohq/anubis"]
     feg["hugmesh-fe-gateway<br/>JWT validation, route-access enforcement"]
-    web["snapdragon-systems-web<br/>host shell"]
+    web["hugmesh-systems-web<br/>host shell"]
 
     client -.->|"installed (ENV=prod default, or explicit opt-in)"| anubis
     client -->|"not installed (ENV=test default, or explicit opt-out)"| feg
