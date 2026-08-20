@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+  <!--
+      RENAME FOLLOW-UP for 001 — repoint the seeded `fe-default` route from the
+      host shell's half-renamed Service name (hugmesh-systems-web) to its final
+      one (hugmesh-host-shell).
+
+      BACKGROUND. The Angular host shell was renamed
+      snapdragon-systems-web -> hugmesh-host-shell. An intermediate sweep left it
+      as `hugmesh-systems-web`, a hybrid that carries no banned token and so was
+      invisible to every grep-driven rename sweep. hugmesh-generator's compose
+      lane had already moved to `hugmesh-host-shell`; its CLUSTER lane (the
+      Deployment/Service pair in specs/cluster/manifests/frontend/ and the
+      rendered route in specs/cluster/apps/20-gateway-fe.yaml) moves in the
+      companion PR. This changeset is the DB-seed half of that same move.
+
+      WHY A NEW CHANGESET INSTEAD OF EDITING 001 IN PLACE.
+      001-gateway-routes.xml is shipped and may already have run in live
+      databases, so it is immutable history:
+        1. The uri lives INSIDE 001's <changeSet>, so rewriting it changes that
+           changeSet's Liquibase MD5. Every DB that already ran 001 would then
+           fail startup with ValidationFailedException on a checksum mismatch.
+        2. Even ignoring checksums, an in-place edit would NOT fix an already
+           migrated DB: 001 is recorded RAN and never re-executes, so the live
+           row would keep pointing at the dead Service name forever. Only a NEW
+           changeset can migrate an existing row.
+      Follows the canonical pattern in hugmesh-federation-api's
+      039-rebrand-character-forge-remote-entry.xml.
+
+      DEPLOY ORDERING. The value here must match the host shell's actual k8s
+      Service name, which the companion hugmesh-generator PR renames. The two are
+      safe to land in EITHER order — this changeset is guarded (see SAFETY) and
+      the generator rename does not touch a live cluster until ArgoCD syncs — but
+      the SYNC must not happen while the route still points at the old name, or
+      the Service the /** catch-all dials will not exist and the front page 502s.
+
+      NOT THE ONLY ROUTE SOURCE. Per this repo's README "Known gaps", neither the
+      production Helm chart nor the local compose stack loads this overlay today;
+      both deploy the shared hugmesh-gateway image with their own
+      generator-rendered application-routes.yml. This changeset (and the
+      application-fe.yml default beside it) therefore keeps THIS repo's own
+      artifact self-consistent and correct for anyone who does run it — it is not
+      what repoints the currently-deployed mesh.
+
+      SAFETY. The preCondition matches the row ONLY while it still carries the
+      exact pre-rename uri, so the changeset is idempotent (re-runs MARK_RAN) and
+      it never clobbers an operator override of the route's uri. The same
+      predicate is repeated in the <where> clause so a concurrent override
+      between the precondition check and the UPDATE is a no-op rather than a
+      silent overwrite. A rollback restores the pre-rename uri.
+
+      Keep in sync with the default route/URI in application-fe.yml
+      (fe-default / DOWNSTREAM_URI).
+  -->
+
+  <changeSet id="002-1-route-fe-default-to-host-shell" author="hugmesh">
+    <preConditions onFail="MARK_RAN">
+      <sqlCheck expectedResult="1">
+        SELECT COUNT(*) FROM gateway_routes
+         WHERE route_id = 'fe-default'
+           AND uri = 'http://hugmesh-systems-web.hugmesh-frontend.svc.cluster.local:80'
+      </sqlCheck>
+    </preConditions>
+
+    <update tableName="gateway_routes">
+      <column name="uri" value="http://hugmesh-host-shell.hugmesh-frontend.svc.cluster.local:80"/>
+      <where>
+        route_id = 'fe-default'
+        AND uri = 'http://hugmesh-systems-web.hugmesh-frontend.svc.cluster.local:80'
+      </where>
+    </update>
+
+    <rollback>
+      <update tableName="gateway_routes">
+        <column name="uri" value="http://hugmesh-systems-web.hugmesh-frontend.svc.cluster.local:80"/>
+        <where>
+          route_id = 'fe-default'
+          AND uri = 'http://hugmesh-host-shell.hugmesh-frontend.svc.cluster.local:80'
+        </where>
+      </update>
+    </rollback>
+  </changeSet>
+
+</databaseChangeLog>

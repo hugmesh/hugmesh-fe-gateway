@@ -31,7 +31,7 @@ docker build -t hugmesh-systems/fe-gateway:dev .
 Shipped on `main` today (see "Known gaps" below for what's still unverified):
 
 - **Frontend-tier overlay is live.** The single catch-all `fe-default`
-  (`Path=/**` → `hugmesh-systems-web`) route is seeded via Liquibase and
+  (`Path=/**` → `hugmesh-host-shell`) route is seeded via Liquibase and
   configured under the **SCG 5.0 `spring.cloud.gateway.server.webflux.routes`**
   namespace (the legacy `spring.cloud.gateway.routes` prefix binds nothing under
   Spring Cloud Gateway 5.0 — see the SCG-5 note in `application-fe.yml`).
@@ -76,7 +76,7 @@ Ecosystem baseline this overlay inherits from the shared gateway image:
 | **Tier** | frontend (host + remotes front door) |
 | **Namespace** | `hugmesh-frontend` |
 | **Identity** | `hugmesh-fe-gateway` (the `gateway` key for its route-access rows) |
-| **Downstream** | `hugmesh-systems-web.hugmesh-frontend.svc.cluster.local:80` (override `DOWNSTREAM_URI`) |
+| **Downstream** | `hugmesh-host-shell.hugmesh-frontend.svc.cluster.local:80` (override `DOWNSTREAM_URI`) |
 | **Auth** | validates the **internal Casdoor JWT** as an OAuth2 resource server; **no external login is exposed** (the shared image's pre-security filter exchanges the browser's opaque `bff_` session → custody JWT before validation) |
 | **Base image** | `hugmesh-gateway` (one image, differentiated by `SPRING_APPLICATION_NAME`) |
 
@@ -92,8 +92,9 @@ name, route set and route-access rows. This repo is the frontend one.
 |------|---------|
 | `Dockerfile` | `FROM ${GATEWAY_IMAGE}` then bakes the fe identity + config + Liquibase changelog onto the shared image (sets `SPRING_APPLICATION_NAME` and `SPRING_CONFIG_ADDITIONAL_LOCATION`) |
 | `application-fe.yml` | overlay config: `application.name`, the Casdoor `issuer-uri`, and the single `fe-default` `Path=/**` route to the web frontend (under the SCG 5.0 `spring.cloud.gateway.server.webflux.routes` namespace) |
-| `liquibase/changelog/001-gateway-routes.xml` | seeds the `fe-default` route (`Path=/**` → `hugmesh-systems-web`) into the DB-backed `gateway_routes` registry |
-| `liquibase/changelog/db.changelog-master.xml` | Liquibase master changelog that includes the route seed |
+| `liquibase/changelog/001-gateway-routes.xml` | seeds the `fe-default` route (`Path=/**` → the host shell) into the DB-backed `gateway_routes` registry. **Shipped history — never edit in place** (checksum + already-migrated DBs); migrate the value with a new changeset instead |
+| `liquibase/changelog/002-route-host-shell.xml` | additive follow-up to 001: repoints `fe-default` onto the host shell's final Service name (`hugmesh-systems-web` → `hugmesh-host-shell`). Guarded by a precondition on the exact old value, so it is idempotent and never clobbers an operator override |
+| `liquibase/changelog/db.changelog-master.xml` | Liquibase master changelog that includes the route seed + its follow-ups |
 | `.gitlab-ci.yml` | builds + pushes this overlay image, basing the build off the sibling `hugmesh-gateway` image in the same in-cluster GitLab registry namespace |
 
 CI is **GitLab** (in-cluster). There are no GitHub Actions workflows in this repo.
@@ -123,7 +124,7 @@ sequenceDiagram
     participant U as user-bff
     participant C as Casdoor
     participant G as hugmesh-fe-gateway
-    participant W as hugmesh-systems-web
+    participant W as hugmesh-host-shell
 
     Note over B,C: Login (native-login model, once per session; Casdoor is internal-only)
     B->>L: loads login form (own UI, no Casdoor redirect)
@@ -281,7 +282,7 @@ is documented in `hugmesh-gateway`.
 |---------|---------|---------|
 | `SPRING_APPLICATION_NAME` | `hugmesh-fe-gateway` | gateway identity + route-access `gateway` key (baked into the image) |
 | `CASDOOR_ISSUER_URI` | `https://id.hugmesh.net` | trusted Casdoor issuer for JWT validation |
-| `DOWNSTREAM_URI` | `http://hugmesh-systems-web.hugmesh-frontend.svc.cluster.local:80` | the web frontend this gateway fronts — the literal default baked into `application-fe.yml` / the Liquibase seed, matching the `hugmesh-systems-web` Service `hugmesh-generator` deploys |
+| `DOWNSTREAM_URI` | `http://hugmesh-host-shell.hugmesh-frontend.svc.cluster.local:80` | the web frontend this gateway fronts — the literal default baked into `application-fe.yml`, and the value 002 migrates the Liquibase-seeded row to, matching the `hugmesh-host-shell` Service `hugmesh-generator` deploys |
 | `APP_TENANCY_ISSUERS` | _(empty)_ | CSV `issuerUri=domain,…` — enables multi-brand mode (empty ⇒ single-tenant `default`) |
 | `APP_TENANCY_HOSTS` | _(empty)_ | CSV `hostSuffix=domain,…` — defense-in-depth Host→domain map |
 | `ROUTE_ACCESS_R2DBC_URL` | _(empty)_ | Postgres source-of-truth for route-access rows (empty ⇒ Cassandra-cache/seed only) |
@@ -340,14 +341,26 @@ is documented in `hugmesh-gateway`.
     should make — flagged here so nobody assumes `docker build .` of this repo
     produces what actually runs anywhere else in the platform.
 - **~~The downstream host-shell Service still carried its pre-rebrand name~~ —
-  RESOLVED.** Verified 2026-08-19 directly against `hugmesh-generator`'s
-  current source: both `specs/cluster/manifests/frontend/deployment.yaml` (the
-  `Deployment`/`Service` pair) and the real rendered route in
-  `specs/cluster/apps/20-gateway-fe.yaml` now use `hugmesh-systems-web`
-  (`http://hugmesh-systems-web.hugmesh-frontend.svc.cluster.local:80`), so this
-  repo's own `DOWNSTREAM_URI` default, `application-fe.yml`, and Liquibase seed
-  — which said `hugmesh-systems-web` all along — finally resolve against the
-  real Service name.
+  RESOLVED, but the first resolution was only HALF a rename.** The 2026-08-19
+  check recorded here confirmed that `hugmesh-generator`'s
+  `specs/cluster/manifests/frontend/deployment.yaml` and its rendered route in
+  `specs/cluster/apps/20-gateway-fe.yaml` agreed with this repo — on
+  `hugmesh-systems-web`. That agreement was real but the *name* was not final:
+  `hugmesh-systems-web` was a hybrid left by an intermediate sweep, already
+  `hugmesh-`-prefixed and therefore carrying no banned token, which is exactly
+  why no grep-driven rename sweep ever surfaced it. The generator's compose lane
+  had meanwhile moved on to `hugmesh-host-shell`, so the two lanes had silently
+  split.
+  Both lanes now say **`hugmesh-host-shell`**, and the generator asserts that
+  cross-lane agreement mechanically (`scripts/validate-reserved-prefixes.sh`
+  stage 6b: a hybrid gate plus a paired-move assertion over all 13 members of
+  the shell's name set), so this can no longer drift back to prose nobody
+  re-checks. This repo's side is `application-fe.yml`'s `DOWNSTREAM_URI` default
+  plus `002-route-host-shell.xml`, which migrates the 001-seeded row.
+  **Ordering:** the generator rename does not touch the running cluster until
+  ArgoCD syncs, but that sync recreates the Service under the new name — so this
+  repo's route value must be in place before the sync, or the `/**` catch-all
+  dials a Service that no longer exists and the front page 502s.
 
 ---
 
@@ -416,7 +429,7 @@ flowchart TD
     client["Browser / client"]
     anubis["Anubis (optional)<br/>proof-of-work challenge, ghcr.io/techarohq/anubis"]
     feg["hugmesh-fe-gateway<br/>JWT validation, route-access enforcement"]
-    web["hugmesh-systems-web<br/>host shell"]
+    web["hugmesh-host-shell<br/>host shell"]
 
     client -.->|"installed (ENV=prod default, or explicit opt-in)"| anubis
     client -->|"not installed (ENV=test default, or explicit opt-out)"| feg

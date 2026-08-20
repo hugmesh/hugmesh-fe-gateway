@@ -3,4 +3,9 @@
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
   <include file="001-gateway-routes.xml" relativeToChangelogFile="true"/>
+  <!-- 002 repoints the seeded fe-default uri onto the host shell's final Service
+       name (hugmesh-systems-web -> hugmesh-host-shell). Additive on purpose: 001
+       is shipped history and editing it in place would break its checksum AND
+       leave already-migrated databases on the dead name. -->
+  <include file="002-route-host-shell.xml" relativeToChangelogFile="true"/>
 </databaseChangeLog>
