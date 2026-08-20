@@ -14,7 +14,9 @@ spring:
       # route must live under server.webflux to be honoured.
       #
       # Keep this default route/URI in sync with the seeded row in
-      # liquibase/changelog/001-gateway-routes.xml (route_id=fe-default).
+      # liquibase/changelog/001-gateway-routes.xml (route_id=fe-default), as
+      # migrated by 002-route-host-shell.xml — 001 is shipped history, so the
+      # host-shell rename lands as an additive changeset, not an edit to 001.
       #
       # NOTE: neither the production Helm chart nor the local compose stack
       # (both in hugmesh-generator) actually loads THIS file — they deploy
@@ -26,6 +28,6 @@ spring:
         webflux:
           routes:
             - id: fe-default
-              uri: ${DOWNSTREAM_URI:http://hugmesh-systems-web.hugmesh-frontend.svc.cluster.local:80}
+              uri: ${DOWNSTREAM_URI:http://hugmesh-host-shell.hugmesh-frontend.svc.cluster.local:80}
               predicates:
                 - Path=/**
