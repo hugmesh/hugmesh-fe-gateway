@@ -40,9 +40,12 @@ On `main` today (see "Known gaps" below for what is still unverified):
   login**. It validates the internal Casdoor JWT (fetching Casdoor's signing
   keys) and runs the inherited authority conversion and route-access
   enforcement (see below).
+- **Version `0.1.0-beta.1`** (the `VERSION` file). `0.1` means overlay: no
+  code or tests of its own, and the image has not yet been published from
+  GitHub.
 - **CI is GitLab** (in-cluster). The one GitHub Actions workflow,
-  `.github/workflows/release.yml`, is manual-only (`workflow_dispatch`) and
-  pushes the overlay image to `ghcr.io/hugmesh/hugmesh-fe-gateway`.
+  `.github/workflows/release.yml`, publishes the overlay image to
+  `ghcr.io/hugmesh/hugmesh-fe-gateway` (see "Releasing" below).
 
 The overlay inherits this baseline from the shared gateway image:
 
@@ -105,10 +108,34 @@ name, route set and route-access rows. This repo is the frontend one.
 | `liquibase/changelog/002-route-host-shell.xml` | additive follow-up to 001: repoints `fe-default` onto the host shell's final Service name (`hugmesh-systems-web` → `hugmesh-host-shell`). Guarded by a precondition on the exact old value, so it is idempotent and never clobbers an operator override |
 | `liquibase/changelog/db.changelog-master.xml` | Liquibase master changelog that includes the route seed + its follow-ups |
 | `.gitlab-ci.yml` | builds + pushes this overlay image, basing the build off the sibling `hugmesh-gateway` image in the same in-cluster GitLab registry namespace |
-| `.github/workflows/release.yml` | manual (`workflow_dispatch`) build of the same overlay, `FROM` the `gateway_image` input (default `ghcr.io/hugmesh/hugmesh-gateway:latest`), pushed to `ghcr.io/hugmesh/hugmesh-fe-gateway` as `:<tag>` (default `latest`) and `:<commit sha>`. It checks that the base image can be pulled first |
+| `VERSION` | this image's version (`0.1.0-beta.1`). A `v<version>` git tag must match it |
+| `.github/workflows/release.yml` | GHCR publish of the same overlay, `FROM` the pinned `ghcr.io/hugmesh/hugmesh-gateway:0.3.0-beta.1`. Runs on push to `main`, on `v*` tags and on manual dispatch; see "Releasing" below. It checks that the base image can be pulled first |
 
-CI is **GitLab** (in-cluster). The only GitHub Actions workflow is the
-manual-only `release.yml` above.
+CI is **GitLab** (in-cluster). The only GitHub Actions workflow is
+`release.yml` above.
+
+### Releasing
+
+- **Version scheme:** `MAJOR.MINOR.PATCH-beta.N`. The `VERSION` file holds the
+  current one. A fix during a beta raises `N`.
+- **Push to `main`:** builds and pushes `:main` and `:sha-<12 hex>`.
+- **Tag `v<VERSION>`** (annotated, on a commit on `main`): builds and pushes
+  `:<VERSION>`, `:beta` and `:sha-<12 hex>`, and creates a GitHub prerelease
+  that is never marked latest. The run fails if the tag does not match
+  `VERSION`, if `VERSION` is a SNAPSHOT, or if `:<VERSION>` already exists on
+  GHCR (a published version is never overwritten).
+- **Manual dispatch:** on `main` it does a main build; on a `v*` tag it
+  re-runs that release. Any other ref is refused. The optional
+  `gateway_image` input overrides the base image on a main run only.
+- **Never `:latest` for a beta.**
+- **Base image:** pinned in `release.yml` (`GATEWAY_IMAGE_PIN`) to an exact
+  `hugmesh-gateway` version. That version must be published first, and this
+  repository needs Read under that package's Manage Actions access.
+- **Runner:** the jobs use the self-hosted runner only when the
+  `RUNS_ON_PUBLISH` repository variable is set (a JSON array of labels) and
+  the run is for `main` or a `v*` tag. Otherwise they run on hosted
+  `ubuntu-latest`. Deleting the variable switches back to hosted runners. The
+  workflow has no `pull_request` trigger.
 
 ---
 
