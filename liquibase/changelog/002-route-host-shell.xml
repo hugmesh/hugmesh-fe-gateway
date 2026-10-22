@@ -8,8 +8,8 @@
       host shell's half-renamed Service name (hugmesh-systems-web) to its final
       one (hugmesh-host-shell).
 
-      BACKGROUND. The Angular host shell was renamed
-      snapdragon-systems-web -> hugmesh-host-shell. An intermediate sweep left it
+      BACKGROUND. The Angular host shell was renamed from its original
+      pre-rebrand Service name to hugmesh-host-shell. An intermediate sweep left it
       as `hugmesh-systems-web`, a hybrid that carries no banned token and so was
       invisible to every grep-driven rename sweep. hugmesh-generator's compose
       lane had already moved to `hugmesh-host-shell`; its CLUSTER lane (the
