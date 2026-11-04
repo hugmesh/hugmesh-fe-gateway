@@ -109,32 +109,45 @@ name, route set and route-access rows. This repo is the frontend one.
 | `liquibase/changelog/db.changelog-master.xml` | Liquibase master changelog that includes the route seed + its follow-ups |
 | `.gitlab-ci.yml` | builds + pushes this overlay image, basing the build off the sibling `hugmesh-gateway` image in the same in-cluster GitLab registry namespace |
 | `VERSION` | this image's version (`0.1.0-beta.1`). A `v<version>` git tag must match it |
-| `.github/workflows/release.yml` | GHCR publish of the same overlay, `FROM` the pinned `ghcr.io/hugmesh/hugmesh-gateway:0.3.0-beta.1`. Runs on push to `main`, on `v*` tags and on manual dispatch; see "Releasing" below. It checks that the base image can be pulled first |
+| `.github/workflows/release.yml` | GHCR publish of the same overlay, `FROM` the pinned `ghcr.io/hugmesh/hugmesh-gateway:0.3.0-beta.1`. Runs on push to `main` and `release/X.Y`, on `v*` tags and on manual dispatch; see "Releasing" below. It checks that the base image can be pulled first |
+| `scripts/release-channel.sh` | decides, from the ref, what one release run may publish (channel, image tags, whether `:X.Y` and `:latest` move). Tested by `scripts/test-release-channel.sh`, which the release workflow runs first (`bash scripts/test-release-channel.sh` locally; needs git, python3 and sort -V, no network or docker) |
 
 CI is **GitLab** (in-cluster). The only GitHub Actions workflow is
 `release.yml` above.
 
 ### Releasing
 
-- **Version scheme:** `MAJOR.MINOR.PATCH-beta.N`. The `VERSION` file holds the
-  current one. A fix during a beta raises `N`.
+The release channel comes from the tag (`scripts/release-channel.sh`):
+
+- **Version scheme:** `MAJOR.MINOR.PATCH-beta.N` for a beta,
+  `MAJOR.MINOR.PATCH` for a stable release. The `VERSION` file holds the
+  current one, and a `v<VERSION>` tag must match it. Any other pre-release
+  (`-rc.N`, ...) is refused.
 - **Push to `main`:** builds and pushes `:main` and `:sha-<12 hex>`.
-- **Tag `v<VERSION>`** (annotated, on a commit on `main`): builds and pushes
-  `:<VERSION>`, `:beta` and `:sha-<12 hex>`, and creates a GitHub prerelease
-  that is never marked latest. The run fails if the tag does not match
-  `VERSION`, if `VERSION` is a SNAPSHOT, or if `:<VERSION>` already exists on
-  GHCR (a published version is never overwritten).
-- **Manual dispatch:** on `main` it does a main build; on a `v*` tag it
-  re-runs that release. Any other ref is refused. The optional
-  `gateway_image` input overrides the base image on a main run only.
-- **Never `:latest` for a beta.**
+- **Push to `release/X.Y`:** builds and pushes `:sha-<12 hex>` only. `VERSION`
+  must be on the `X.Y` line. Any other `release/...` name is refused.
+- **Beta tag `vX.Y.Z-beta.N`** (on a commit on `main`): pushes
+  `:X.Y.Z-beta.N`, `:beta` and `:sha-<12 hex>`, and creates a GitHub
+  prerelease that is never marked Latest. A fix during a beta raises `N`.
+- **Stable tag `vX.Y.Z`** (on a commit on `release/X.Y`): pushes `:X.Y.Z`
+  and `:sha-<12 hex>`, plus `:X.Y` when no newer `X.Y.*` is published and
+  `:latest` when no newer stable is published on any line. Its GitHub release
+  is marked Latest only in that last case, so a patch on an older line moves
+  `:X.Y` but never `:latest`.
+- **Never overwritten:** the run fails if `:<VERSION>` already exists on GHCR.
+  The floating `:beta`, `:X.Y` and `:latest` move. Every pushed tag is checked
+  to resolve to the one signed digest.
+- **Manual dispatch:** on `main` or `release/X.Y` it does that branch's
+  build; on a `v*` tag it re-runs that release and leaves an image or GitHub
+  release that already exists alone. Any other ref is refused. The optional
+  `gateway_image` input overrides the base image on a `main` run only.
 - **Base image:** pinned in `release.yml` (`GATEWAY_IMAGE_PIN`) to an exact
   `hugmesh-gateway` version. That version must be published first, and this
   repository needs Read under that package's Manage Actions access.
 - **Runner:** the jobs use the self-hosted runner only when the
   `RUNS_ON_PUBLISH` repository variable is set (a JSON array of labels) and
-  the run is for `main` or a `v*` tag. Otherwise they run on hosted
-  `ubuntu-latest`. Deleting the variable switches back to hosted runners. The
+  the run is for `main` or a `v*` tag. Otherwise (`release/X.Y` included)
+  they run on hosted `ubuntu-latest`. Deleting the variable switches back to hosted runners. The
   workflow has no `pull_request` trigger.
 
 ---
