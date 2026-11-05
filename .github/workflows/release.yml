@@ -78,7 +78,7 @@ env:
   IMAGE_NAME: ghcr.io/hugmesh/hugmesh-fe-gateway
   # Exact base image this overlay is built FROM. Overlays pin the exact
   # gateway version, never :beta and never :latest.
-  GATEWAY_IMAGE_PIN: ghcr.io/hugmesh/hugmesh-gateway:0.3.0-beta.1
+  GATEWAY_IMAGE_PIN: ghcr.io/hugmesh/hugmesh-gateway:0.4.0-beta.2
 
 jobs:
   version:
