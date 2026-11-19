@@ -1,0 +1,50 @@
+# Pull-request CI: the repo's own release-channel tests, and the overlay image builds (no push).
+# Added by hugmesh-generator#954: this repo's only workflow was release.yml, so a pull request ran no
+# build or test. The image OVERLAYS the shared hugmesh-gateway image; the base is the same pin release.yml
+# builds from (read from that file, so the two cannot drift).
+#
+# Advisory today: required status checks cannot be set on this plan (branch protection answers 403 until
+# the plan changes), so a red check does not block a merge by itself. Read it before merging.
+#
+# GitHub-hosted `ubuntu-latest`, written literally: this runs on pull_request and the repository is public,
+# so it must never name a self-hosted runner (a fork's PR runs the fork's copy of this file).
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A superseded run is cancelled, so the check always reflects the latest commit.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scripts:
+    name: Release-channel tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/test-release-channel.sh
+
+  image:
+    name: Build the overlay image (no push)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read the gateway base image release.yml pins
+        id: base
+        run: |
+          set -euo pipefail
+          pin="$(sed -n 's/^  GATEWAY_IMAGE_PIN: *//p' .github/workflows/release.yml | head -1 | tr -d '[:space:]')"
+          [ -n "${pin}" ] || { echo "::error::no GATEWAY_IMAGE_PIN in .github/workflows/release.yml"; exit 1; }
+          echo "pin=${pin}" >> "$GITHUB_OUTPUT"
+          echo "building FROM ${pin}"
+      - name: docker build
+        run: docker build --build-arg "GATEWAY_IMAGE=${{ steps.base.outputs.pin }}" -t hugmesh-fe-gateway:ci .
